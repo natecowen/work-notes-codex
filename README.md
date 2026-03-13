@@ -36,6 +36,9 @@ work-notes-reporter:
   drafts:
     weekly: generated weekly drafts waiting for your review
     monthly: generated monthly drafts waiting for your review
+    prompts:
+      weekly: exported prompt packages for generating weekly summaries in another LLM
+      monthly: exported prompt packages for generating monthly summaries in another LLM
   final:
     weekly: approved weekly outputs copied from drafts
     monthly: approved monthly outputs copied from drafts
@@ -190,6 +193,7 @@ Customization examples:
 - Want stronger voice matching: add more of your real weekly/monthly summaries into the folders listed in `voice.sample_dirs`, then run `npm run dev -- voice profile`.
 - Want a different weekly format: edit `templates/weekly.md` and keep the required placeholders.
 - Want different attendance labels like `vacation` or `pto`: update `attendance.values` and then use those values in daily frontmatter.
+- Want to use Copilot or another external AI instead of Ollama for a specific run: use `--export-prompt` on weekly or monthly generation.
 
 ## Command Reference (`worklog`)
 Use these only after setting up the global command in "Run Modes".
@@ -202,7 +206,9 @@ worklog voice profile
 worklog generate daily --date 2026-02-18
 worklog generate dailies --friday 2026-02-20
 worklog generate weekly --friday 2026-02-20
+worklog generate weekly --friday 2026-02-20 --export-prompt
 worklog generate monthly --month 2026-01
+worklog generate monthly --month 2026-01 --export-prompt
 worklog report attendance --week 2026-02-20
 worklog report attendance --month 2026-01
 worklog report attendance --from 2026-01-01 --to 2026-02-20
@@ -328,21 +334,61 @@ Windows (PowerShell):
    ```bash
    npm run dev -- generate weekly --friday 2026-02-20
    ```
-10. Generate monthly draft:
+10. Export a weekly prompt package for another LLM:
+   ```bash
+   npm run dev -- generate weekly --friday 2026-02-20 --export-prompt
+   ```
+   This writes a markdown prompt package under `drafts/prompts/weekly/`.
+11. Generate monthly draft:
    ```bash
    npm run dev -- generate monthly --month 2026-02
    ```
-11. Attendance reports:
+12. Export a monthly prompt package for another LLM:
+   ```bash
+   npm run dev -- generate monthly --month 2026-02 --export-prompt
+   ```
+   This writes a markdown prompt package under `drafts/prompts/monthly/`.
+13. Attendance reports:
    ```bash
    npm run dev -- report attendance --week 2026-02-20
    npm run dev -- report attendance --month 2026-02
    npm run dev -- report attendance --from 2026-02-01 --to 2026-02-20
    ```
-12. Approve drafts:
+14. Approve drafts:
    ```bash
    npm run dev -- approve weekly --friday 2026-02-20
    npm run dev -- approve monthly --month 2026-02
    ```
+
+## External LLM Prompt Export
+Use prompt export when:
+
+- Ollama is unavailable.
+- The local model is not following the template well enough.
+- You want to paste a prepared prompt into Copilot or another external AI tool.
+
+Prompt packages are written to files instead of only printing to the terminal so you can review or redact sensitive work details before sending them, avoid copy/paste mistakes, and keep a reusable record of what was sent.
+
+What exported weekly prompt packages include:
+
+- instructions telling the external LLM to create a markdown file with the correct weekly filename
+- the weekly template
+- your current week source notes from `notes/daily`
+- sample writing from the configured `voice.sample_dirs`
+- voice/style constraints derived from your writing
+
+What exported monthly prompt packages include:
+
+- instructions telling the external LLM to create a markdown file with the correct monthly filename
+- the monthly template
+- source weekly notes from `notes/weekly`
+- sample writing from the configured `voice.sample_dirs`
+- voice/style constraints derived from your writing
+
+Output locations:
+
+- weekly prompt package: `drafts/prompts/weekly/YYYY-MM-DD-weekly-prompt.md`
+- monthly prompt package: `drafts/prompts/monthly/YYYY-MM-monthly-prompt.md`
 
 ## Approval Flow
 - Generate output into `drafts/`.

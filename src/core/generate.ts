@@ -5,7 +5,7 @@ import { readText, writeText, listMarkdownFiles } from "./files.js";
 import { loadDailyEntriesForWeek } from "./indexing.js";
 import { generateWithOllama } from "./llm.js";
 import type { AppConfig } from "../types.js";
-import { buildStyleProfile, loadStyleProfile, toStyleInstruction } from "./style.js";
+import { buildStyleProfile, loadSampleWritingExamples, loadStyleProfile, toStyleInstruction } from "./style.js";
 
 function renderAttendance(totals: ReturnType<typeof aggregateAttendance>): string {
   return [
@@ -15,6 +15,52 @@ function renderAttendance(totals: ReturnType<typeof aggregateAttendance>): strin
     `- Sick: ${totals.sick}`,
     `- Vacation: ${totals.vacation}`
   ].join("\n");
+}
+
+async function resolveStyleInstruction(cwd: string, config: AppConfig, warnings: string[], fallback: string): Promise<string> {
+  let styleInstruction = fallback;
+  if (config.voice.style_profile_from_samples) {
+    try {
+      const profile = await buildStyleProfile(cwd, config);
+      styleInstruction = toStyleInstruction(profile);
+    } catch (error) {
+      const cachedProfile = await loadStyleProfile(cwd, config);
+      if (cachedProfile) {
+        styleInstruction = toStyleInstruction(cachedProfile);
+        warnings.push(`Style profile refresh failed; used cached style profile. ${String(error)}`);
+      } else {
+        warnings.push(`Style profile unavailable; using default voice rules. ${String(error)}`);
+      }
+    }
+  }
+  return styleInstruction;
+}
+
+function promptPath(baseDir: string, type: "weekly" | "monthly", key: string): string {
+  const fileName = type === "weekly" ? `${key}-weekly-prompt.md` : `${key}-monthly-prompt.md`;
+  return path.join(baseDir, "prompts", type, fileName);
+}
+
+function renderSampleWritingBlocks(samples: Array<{ path: string; content: string }>): string {
+  if (samples.length === 0) {
+    return "No sample writing files were found in the configured voice.sample_dirs folders.";
+  }
+
+  return samples
+    .map(
+      (sample, index) =>
+        `## Sample Writing ${index + 1}\nSource: ${sample.path}\n\n\`\`\`md\n${sample.content.trim()}\n\`\`\``
+    )
+    .join("\n\n");
+}
+
+function renderSourceBlocks(blocks: Array<{ path: string; content: string }>, heading: string): string {
+  return [
+    heading,
+    ...blocks.map(
+      (item, index) => `## Source ${index + 1}\nPath: ${item.path}\n\n\`\`\`md\n${item.content.trim()}\n\`\`\``
+    )
+  ].join("\n\n");
 }
 
 function deterministicWeekly(
@@ -60,21 +106,7 @@ export async function generateWeeklyDraft(
   mondayIso: string
 ): Promise<{ outputPath: string; warnings: string[] }> {
   const warnings: string[] = [];
-  let styleInstruction = "Facts only. No hype. No assumptions.";
-  if (config.voice.style_profile_from_samples) {
-    try {
-      const profile = await buildStyleProfile(cwd, config);
-      styleInstruction = toStyleInstruction(profile);
-    } catch (error) {
-      const cachedProfile = await loadStyleProfile(cwd, config);
-      if (cachedProfile) {
-        styleInstruction = toStyleInstruction(cachedProfile);
-        warnings.push(`Style profile refresh failed; used cached style profile. ${String(error)}`);
-      } else {
-        warnings.push(`Style profile unavailable; using default voice rules. ${String(error)}`);
-      }
-    }
-  }
+  const styleInstruction = await resolveStyleInstruction(cwd, config, warnings, "Facts only. No hype. No assumptions.");
   const { entries, missingDates } = await loadDailyEntriesForWeek(cwd, config, mondayIso);
   if (missingDates.length > 0) warnings.push(`Missing daily files: ${missingDates.join(", ")}`);
 
@@ -120,27 +152,76 @@ export async function generateWeeklyDraft(
   return { outputPath, warnings };
 }
 
+export async function exportWeeklyPrompt(
+  cwd: string,
+  config: AppConfig,
+  fridayIso: string,
+  mondayIso: string
+): Promise<{ outputPath: string; warnings: string[] }> {
+  const warnings: string[] = [];
+  const styleInstruction = await resolveStyleInstruction(cwd, config, warnings, "Facts only. No hype. No assumptions.");
+  const { entries, missingDates } = await loadDailyEntriesForWeek(cwd, config, mondayIso);
+  if (missingDates.length > 0) warnings.push(`Missing daily files: ${missingDates.join(", ")}`);
+
+  const attendance = aggregateAttendance(entries);
+  const attendanceMd = renderAttendance(attendance);
+  const templatePath = path.resolve(cwd, config.paths.templates_dir, "weekly.md");
+  const template = await readText(templatePath);
+  const samples = await loadSampleWritingExamples(cwd, config);
+  const sourceBlocks = await Promise.all(
+    entries.map(async (entry) => ({
+      path: path.relative(cwd, entry.sourcePath),
+      content: await readText(entry.sourcePath)
+    }))
+  );
+
+  const fileName = weeklyFileName(fridayIso);
+  const prompt = [
+    `# External LLM Prompt Package: Weekly Summary`,
+    "",
+    "Use this prompt in another LLM when local generation is unavailable or not good enough.",
+    "",
+    "## Instructions For The LLM",
+    `Create exactly one markdown file named \`${fileName}\`.`,
+    "Return only the markdown file contents. Do not include commentary, explanation, or code fences around the final answer.",
+    "If the UI supports file export or download, make the result a downloadable markdown file with that file name.",
+    "Preserve the weekly template structure and headers exactly.",
+    "Replace all template placeholders with real content. Do not leave placeholder tokens like `{{FRIDAY}}` in the final file.",
+    styleInstruction,
+    "Use the daily notes below as the source of truth.",
+    "Use the sample writing only for tone and phrasing, not as factual source material.",
+    "Do not invent meetings, outcomes, risks, or blockers.",
+    "",
+    "## Target Week",
+    `Friday date: ${fridayIso}`,
+    `Monday date: ${mondayIso}`,
+    "",
+    "## Attendance Summary",
+    attendanceMd,
+    "",
+    "## Weekly Template",
+    "```md",
+    template.trim(),
+    "```",
+    "",
+    "## Sample Writing",
+    renderSampleWritingBlocks(samples),
+    "",
+    renderSourceBlocks(sourceBlocks, "## Source Daily Notes")
+  ].join("\n");
+
+  const outputPath = path.resolve(cwd, config.paths.drafts_dir, promptPath("", "weekly", fridayIso));
+  await writeText(outputPath, prompt.trimEnd() + "\n");
+  return { outputPath, warnings };
+}
+
 export async function generateMonthlyDraft(
   cwd: string,
   config: AppConfig,
   month: string
 ): Promise<{ outputPath: string; warnings: string[] }> {
   const warnings: string[] = [];
-  let styleInstruction = "Facts only. Do not invent outcomes.";
-  if (config.voice.style_profile_from_samples) {
-    try {
-      const profile = await buildStyleProfile(cwd, config);
-      styleInstruction = toStyleInstruction(profile);
-    } catch (error) {
-      const cachedProfile = await loadStyleProfile(cwd, config);
-      if (cachedProfile) {
-        styleInstruction = toStyleInstruction(cachedProfile);
-        warnings.push(`Style profile refresh failed; used cached style profile. ${String(error)}`);
-      } else {
-        warnings.push(`Style profile unavailable; using default voice rules. ${String(error)}`);
-      }
-    }
-  }
+  const styleInstruction = await resolveStyleInstruction(cwd, config, warnings, "Facts only. Do not invent outcomes.");
   const year = month.slice(0, 4);
   const weeklyDir = path.resolve(cwd, config.paths.weekly_notes_dir, year);
   const weeklyFiles = (await listMarkdownFiles(weeklyDir)).filter((f) =>
@@ -188,5 +269,64 @@ export async function generateMonthlyDraft(
 
   const outputPath = path.resolve(cwd, config.paths.drafts_dir, "monthly", monthFileName(month));
   await writeText(outputPath, content.trimEnd() + "\n");
+  return { outputPath, warnings };
+}
+
+export async function exportMonthlyPrompt(
+  cwd: string,
+  config: AppConfig,
+  month: string
+): Promise<{ outputPath: string; warnings: string[] }> {
+  const warnings: string[] = [];
+  const styleInstruction = await resolveStyleInstruction(cwd, config, warnings, "Facts only. Do not invent outcomes.");
+  const year = month.slice(0, 4);
+  const weeklyDir = path.resolve(cwd, config.paths.weekly_notes_dir, year);
+  const weeklyFiles = (await listMarkdownFiles(weeklyDir)).filter((f) =>
+    monthKey(path.basename(f).slice(0, 10)).startsWith(month)
+  );
+  if (weeklyFiles.length === 0) warnings.push(`No weekly files found for ${month} in ${weeklyDir}`);
+
+  const weeklyBodies = await Promise.all(weeklyFiles.map((file) => readText(file)));
+  const sourceBlocks = weeklyFiles.map((file, index) => ({
+    path: path.relative(cwd, file),
+    content: weeklyBodies[index]
+  }));
+  const templatePath = path.resolve(cwd, config.paths.templates_dir, "monthly.md");
+  const template = await readText(templatePath);
+  const samples = await loadSampleWritingExamples(cwd, config);
+  const fileName = monthFileName(month);
+
+  const prompt = [
+    `# External LLM Prompt Package: Monthly Summary`,
+    "",
+    "Use this prompt in another LLM when local generation is unavailable or not good enough.",
+    "",
+    "## Instructions For The LLM",
+    `Create exactly one markdown file named \`${fileName}\`.`,
+    "Return only the markdown file contents. Do not include commentary, explanation, or code fences around the final answer.",
+    "If the UI supports file export or download, make the result a downloadable markdown file with that file name.",
+    "Preserve the monthly template structure and headers exactly.",
+    "Replace all template placeholders with real content. Do not leave placeholder tokens like `{{MONTH}}` in the final file.",
+    styleInstruction,
+    "Use the weekly summaries below as the source of truth.",
+    "Use the sample writing only for tone and phrasing, not as factual source material.",
+    "Do not invent accomplishments, blockers, or risks.",
+    "",
+    "## Target Month",
+    `Month: ${month}`,
+    "",
+    "## Monthly Template",
+    "```md",
+    template.trim(),
+    "```",
+    "",
+    "## Sample Writing",
+    renderSampleWritingBlocks(samples),
+    "",
+    renderSourceBlocks(sourceBlocks, "## Source Weekly Notes")
+  ].join("\n");
+
+  const outputPath = path.resolve(cwd, config.paths.drafts_dir, promptPath("", "monthly", month));
+  await writeText(outputPath, prompt.trimEnd() + "\n");
   return { outputPath, warnings };
 }

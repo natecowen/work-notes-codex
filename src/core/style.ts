@@ -14,6 +14,13 @@ function sampleDirs(cwd: string, config: AppConfig): string[] {
   return dirs.map((dir) => path.resolve(cwd, dir));
 }
 
+async function sampleFiles(cwd: string, config: AppConfig): Promise<string[]> {
+  return (await Promise.all(sampleDirs(cwd, config).map((dir) => listMarkdownFilesRecursive(dir))))
+    .flat()
+    .filter((file, idx, arr) => arr.indexOf(file) === idx)
+    .sort();
+}
+
 function extractBullets(markdown: string): string[] {
   const content = matter(markdown).content;
   return content
@@ -38,11 +45,7 @@ function topPrefixes(items: string[], limit = 6): string[] {
 }
 
 export async function buildStyleProfile(cwd: string, config: AppConfig): Promise<VoiceStyleProfile> {
-  const dirs = sampleDirs(cwd, config);
-  const files = (await Promise.all(dirs.map((dir) => listMarkdownFilesRecursive(dir))))
-    .flat()
-    .filter((file, idx, arr) => arr.indexOf(file) === idx)
-    .sort();
+  const files = await sampleFiles(cwd, config);
 
   const fileBodies = await Promise.all(files.map((file) => readText(file)));
   const bullets = fileBodies.flatMap((body) => extractBullets(body));
@@ -66,6 +69,20 @@ export async function buildStyleProfile(cwd: string, config: AppConfig): Promise
 
 export async function loadStyleProfile(cwd: string, config: AppConfig): Promise<VoiceStyleProfile | null> {
   return readJsonIfExists<VoiceStyleProfile>(profilePath(cwd, config));
+}
+
+export async function loadSampleWritingExamples(
+  cwd: string,
+  config: AppConfig,
+  limit = 4
+): Promise<Array<{ path: string; content: string }>> {
+  const files = await sampleFiles(cwd, config);
+  const selected = files.slice(-limit);
+  const contents = await Promise.all(selected.map((file) => readText(file)));
+  return selected.map((file, index) => ({
+    path: path.relative(cwd, file),
+    content: contents[index]
+  }));
 }
 
 export function toStyleInstruction(profile: VoiceStyleProfile): string {

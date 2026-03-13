@@ -60,6 +60,12 @@
 - Inject style constraints (`facts_only`, concise, direct).
 - Add deterministic generation defaults.
 
+9. External LLM Prompt Export
+- Export weekly prompt packages containing daily source notes, sample writing, template, and instructions for another LLM.
+- Export monthly prompt packages containing weekly source notes, sample writing, template, and instructions for another LLM.
+- Write prompt packages under `drafts/prompts/weekly/` and `drafts/prompts/monthly/`.
+- Support prompt export through CLI flags on weekly/monthly generation commands.
+
 ## Command Spec (Initial)
 - `worklog init`
 - `worklog validate`
@@ -67,8 +73,8 @@
 - `worklog voice profile`
 - `worklog generate daily --date YYYY-MM-DD [--overwrite]`
 - `worklog generate dailies --friday YYYY-MM-DD [--overwrite]`
-- `worklog generate weekly --friday YYYY-MM-DD`
-- `worklog generate monthly --month YYYY-MM`
+- `worklog generate weekly --friday YYYY-MM-DD [--export-prompt]`
+- `worklog generate monthly --month YYYY-MM [--export-prompt]`
 - `worklog report attendance --week YYYY-MM-DD`
 - `worklog report attendance --month YYYY-MM`
 - `worklog report attendance --from YYYY-MM-DD --to YYYY-MM-DD`
@@ -98,8 +104,9 @@
 ## Definition of Done (V1)
 - Daily scaffolding commands generate single day and full workweek files from template.
 - Generate weekly and monthly drafts from markdown with Ollama.
+- Export weekly and monthly prompt packages for use with an external LLM.
 - Attendance reports for week/month/custom ranges.
 - Carry-forward tasks include all open tasks by default.
 - Approvals work through both metadata and command.
 - Voice profile is generated from sample notes and injected into generation prompts.
-- README includes runnable setup and commands.
+- README includes runnable setup, customization guidance, folder purpose documentation, and external prompt export usage.

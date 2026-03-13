@@ -3,7 +3,7 @@ import { Command } from "commander";
 import path from "node:path";
 import { loadConfig } from "./core/config.js";
 import { resolveWeekWindowFromFriday } from "./core/dates.js";
-import { generateMonthlyDraft, generateWeeklyDraft } from "./core/generate.js";
+import { exportMonthlyPrompt, exportWeeklyPrompt, generateMonthlyDraft, generateWeeklyDraft } from "./core/generate.js";
 import { runAttendanceReport } from "./core/report.js";
 import { approveMonthly, approveWeekly } from "./core/approve.js";
 import { runInit } from "./core/init.js";
@@ -116,12 +116,17 @@ generate
 generate
   .command("weekly")
   .requiredOption("--friday <YYYY-MM-DD>", "Friday date of the target week")
-  .action(async (opts: { friday: string }) => {
+  .option("--export-prompt", "Write an external-LLM prompt package instead of generating with Ollama", false)
+  .action(async (opts: { friday: string; exportPrompt: boolean }) => {
     const cwd = process.cwd();
     const config = await loadConfig(cwd);
     const week = resolveWeekWindowFromFriday(opts.friday);
-    const result = await generateWeeklyDraft(cwd, config, week.friday, week.monday);
-    console.log(`Weekly draft: ${path.relative(cwd, result.outputPath)}`);
+    const result = opts.exportPrompt
+      ? await exportWeeklyPrompt(cwd, config, week.friday, week.monday)
+      : await generateWeeklyDraft(cwd, config, week.friday, week.monday);
+    console.log(
+      `${opts.exportPrompt ? "Weekly prompt package" : "Weekly draft"}: ${path.relative(cwd, result.outputPath)}`
+    );
     if (result.warnings.length > 0) {
       console.log("Warnings:");
       result.warnings.forEach((w) => console.log(`- ${w}`));
@@ -131,11 +136,16 @@ generate
 generate
   .command("monthly")
   .requiredOption("--month <YYYY-MM>", "Month key")
-  .action(async (opts: { month: string }) => {
+  .option("--export-prompt", "Write an external-LLM prompt package instead of generating with Ollama", false)
+  .action(async (opts: { month: string; exportPrompt: boolean }) => {
     const cwd = process.cwd();
     const config = await loadConfig(cwd);
-    const result = await generateMonthlyDraft(cwd, config, opts.month);
-    console.log(`Monthly draft: ${path.relative(cwd, result.outputPath)}`);
+    const result = opts.exportPrompt
+      ? await exportMonthlyPrompt(cwd, config, opts.month)
+      : await generateMonthlyDraft(cwd, config, opts.month);
+    console.log(
+      `${opts.exportPrompt ? "Monthly prompt package" : "Monthly draft"}: ${path.relative(cwd, result.outputPath)}`
+    );
     if (result.warnings.length > 0) {
       console.log("Warnings:");
       result.warnings.forEach((w) => console.log(`- ${w}`));
