@@ -1,0 +1,18 @@
+{
+  "name": "work-notes-reporter",
+  "dockerComposeFile": "../compose.yaml",
+  "service": "worklog",
+  "workspaceFolder": "/workspace",
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash"
+      },
+      "extensions": [
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode"
+      ]
+    }
+  },
+  "postCreateCommand": "npm install"
+}

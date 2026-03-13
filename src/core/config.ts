@@ -7,6 +7,10 @@ export async function loadConfig(cwd: string, configPath = "config/config.yaml")
   const absolute = path.resolve(cwd, configPath);
   const raw = await readText(absolute);
   const parsed = yaml.load(raw) as AppConfig;
+  const endpointOverride = process.env.WORKLOG_OLLAMA_ENDPOINT?.trim();
+  if (endpointOverride) {
+    parsed.llm.endpoint = endpointOverride;
+  }
   validateConfig(parsed);
   return parsed;
 }

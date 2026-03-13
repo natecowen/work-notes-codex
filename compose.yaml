@@ -1,0 +1,19 @@
+services:
+  worklog:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+      - worklog-node-modules:/workspace/node_modules
+    environment:
+      WORKLOG_OLLAMA_ENDPOINT: http://host.docker.internal:11434/api/generate
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    stdin_open: true
+    tty: true
+    command: sleep infinity
+
+volumes:
+  worklog-node-modules:

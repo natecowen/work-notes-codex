@@ -271,6 +271,7 @@ Use one of these modes. Mode A is recommended.
 
 1. Mode A (recommended): project-local commands, no PATH changes required.
 2. Mode B: global `worklog` command available in terminal.
+3. Mode C: Docker development container.
 
 ### Mode A: Project-Local (macOS + Windows)
 - Run commands through npm scripts:
@@ -303,6 +304,46 @@ Windows (PowerShell):
    - `[Environment]::SetEnvironmentVariable("Path", $env:Path + ";C:\\Users\\<you>\\AppData\\Roaming\\npm", "User")`
 3. Open a new terminal and verify:
    - `worklog --help`
+
+### Mode C: Docker Development Container
+Use this mode when you do not want to install Node/npm on the host, or you want a consistent dev environment across machines.
+
+What is included:
+
+- `Dockerfile.dev` for the Node-based dev image
+- `compose.yaml` for running the app in a long-lived dev container
+- `.devcontainer/devcontainer.json` for editor/devcontainer support
+
+Start the container:
+
+```bash
+docker compose up -d --build
+```
+
+Run commands inside the container:
+
+```bash
+docker compose exec worklog npm run dev -- validate
+docker compose exec worklog npm run dev -- generate dailies --friday 2026-02-20
+docker compose exec worklog npm run dev -- generate weekly --friday 2026-02-20
+```
+
+Run one-off commands without attaching to the long-lived container:
+
+```bash
+docker compose run --rm worklog npm run dev -- validate
+```
+
+Stop the container:
+
+```bash
+docker compose down
+```
+
+Ollama note:
+
+- The compose setup sets `WORKLOG_OLLAMA_ENDPOINT=http://host.docker.internal:11434/api/generate` so the container can talk to an Ollama instance running on the host.
+- If your Ollama endpoint is different, update the environment value in `compose.yaml`.
 
 ## Development Setup
 1. Install Node 20+.
@@ -359,6 +400,8 @@ Windows (PowerShell):
    npm run dev -- approve weekly --friday 2026-02-20
    npm run dev -- approve monthly --month 2026-02
    ```
+
+If you are using Docker Mode instead of installing Node locally, replace `npm run dev -- ...` with `docker compose exec worklog npm run dev -- ...`.
 
 ## External LLM Prompt Export
 Use prompt export when:
