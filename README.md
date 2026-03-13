@@ -414,6 +414,12 @@ Use prompt export when:
 
 Prompt packages are written to files instead of only printing to the terminal so you can review or redact sensitive work details before sending them, avoid copy/paste mistakes, and keep a reusable record of what was sent.
 
+Security note:
+
+- This repo should be treated as private.
+- Generated notes, prompt packages, finals, reports, and cache files may contain sensitive internal work details.
+- Review exported prompt packages before sending them to any external AI service.
+
 What exported weekly prompt packages include:
 
 - instructions telling the external LLM to create a markdown file with the correct weekly filename

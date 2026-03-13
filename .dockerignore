@@ -2,3 +2,10 @@ node_modules
 dist
 .git
 .DS_Store
+
+# Exclude work content and generated artifacts from Docker build context.
+notes
+drafts
+final
+reports
+cache
