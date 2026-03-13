@@ -145,7 +145,7 @@ What it does not currently do:
 
 - store a full copy of your writing in a database
 - ship with sample writing for you
-- export a reusable prompt package for another AI provider
+- automatically redact sensitive values in exported external-LLM prompt packages
 
 To build or refresh the style profile after adding your own weekly/monthly samples:
 
@@ -172,6 +172,8 @@ Use `config/config.yaml` when you want to change behavior:
 - `llm.temperature` and `llm.max_tokens`: tighten or loosen generation behavior.
 - `voice.sample_dirs`: choose which folders count as your sample writing.
 - `voice.profile_path`: choose where the derived style profile is stored.
+- `prompting.sample_writing_limit`: cap how many sample writing files are inserted into prompts.
+- `prompting.remember_rules`: strict rules appended to the end of weekly and monthly prompts.
 - `categories`: change the fixed category list used by the app.
 - `attendance.values`: define allowed attendance values.
 - `tasks.open_marker` and `tasks.done_marker`: change checkbox markers if you use a different format.
@@ -246,6 +248,15 @@ voice:
     - final/monthly
   profile_path: cache/style-profile.json
 
+prompting:
+  sample_writing_limit: 2
+  remember_rules:
+    - Be factual.
+    - Use action verbs.
+    - Include system, tool, and people names.
+    - Categorize appropriately (DevOps, Development, Architecture, Leadership, Training).
+    - Keep bullets concise but impactful.
+
 categories:
   - Top Outcomes
   - Problems Solved / Fires Prevented
@@ -289,22 +300,27 @@ Use one of these modes. Mode A is recommended.
 2. Verify:
    - `worklog --help`
 
-If `worklog` is not found after `npm link`, add npm's global bin folder to PATH.
+If `worklog` is not found after `npm link`, add npm's global executable location to PATH.
 
 macOS (zsh):
-1. Find npm global bin:
-   - `npm bin -g`
-2. Add to PATH in `~/.zshrc` (replace with your actual output path):
-   - `export PATH="$PATH:/Users/<you>/.npm-global/bin"`
+1. Find npm global prefix:
+   - `npm config get prefix`
+2. Add the prefix `bin` folder to PATH in `~/.zshrc`:
+   - `export PATH="$PATH:$(npm config get prefix)/bin"`
 3. Reload shell:
    - `source ~/.zshrc`
+4. Verify:
+   - `worklog --help`
 
 Windows (PowerShell):
-1. Find npm global bin:
-   - `npm bin -g`
-2. Add to user PATH (replace with your actual output path):
-   - `[Environment]::SetEnvironmentVariable("Path", $env:Path + ";C:\\Users\\<you>\\AppData\\Roaming\\npm", "User")`
-3. Open a new terminal and verify:
+1. Find npm global prefix:
+   - `npm config get prefix`
+2. The value returned by that command is the folder that should contain `worklog.cmd` after `npm link`.
+   - On most Windows installs this is `C:\Users\<you>\AppData\Roaming\npm`
+3. Add that folder to user PATH if it is not already present:
+   - `$prefix = npm config get prefix`
+   - `[Environment]::SetEnvironmentVariable("Path", $env:Path + ";$prefix", "User")`
+4. Open a new terminal and verify:
    - `worklog --help`
 
 ### Mode C: Docker Development Container

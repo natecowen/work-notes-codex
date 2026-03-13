@@ -2,11 +2,16 @@
 
 Use this prompt in another LLM when local generation is unavailable or not good enough.
 
+## Warning
+Review this prompt package before sending it to any external AI service.
+It may contain sensitive internal work details, names, systems, or project context copied from your notes.
+
 ## Instructions For The LLM
 Create exactly one markdown file named `2026-02-20-ISOWeek.md`.
 Return only the markdown file contents. Do not include commentary, explanation, or code fences around the final answer.
 If the UI supports file export or download, make the result a downloadable markdown file with that file name.
 Preserve the weekly template structure and headers exactly.
+Replace all template placeholders with real content. Do not leave placeholder tokens like `{{FRIDAY}}` in the final file.
 Voice constraints:
 - Facts only. No hype, no fluff, no motivational tone.
 - Use concise bullets and direct statements.
@@ -17,6 +22,15 @@ Voice constraints:
 Use the daily notes below as the source of truth.
 Use the sample writing only for tone and phrasing, not as factual source material.
 Do not invent meetings, outcomes, risks, or blockers.
+
+Remember:
+- Be factual.
+- Use action verbs.
+- Include system, tool, and people names.
+- Categorize appropriately (DevOps, Development, Architecture, Leadership, Training).
+- Keep bullets concise but impactful.
+
+Generate the weekly summary now in a downloadable .md file.
 
 ## Target Week
 Friday date: 2026-02-20
@@ -86,7 +100,7 @@ approved: true
 ## Source Daily Notes
 
 ## Source 1
-Path: /Users/ncowen/repos/Work-Notes-Codex/notes/daily/2026/2026-02-16.md
+Path: notes/daily/2026/2026-02-16.md
 
 ```md
 ---
@@ -112,7 +126,7 @@ Task list for tomorrow:
 ```
 
 ## Source 2
-Path: /Users/ncowen/repos/Work-Notes-Codex/notes/daily/2026/2026-02-17.md
+Path: notes/daily/2026/2026-02-17.md
 
 ```md
 ---
@@ -138,7 +152,7 @@ Task list for tomorrow:
 ```
 
 ## Source 3
-Path: /Users/ncowen/repos/Work-Notes-Codex/notes/daily/2026/2026-02-18.md
+Path: notes/daily/2026/2026-02-18.md
 
 ```md
 ---
@@ -164,7 +178,7 @@ Task list for tomorrow:
 ```
 
 ## Source 4
-Path: /Users/ncowen/repos/Work-Notes-Codex/notes/daily/2026/2026-02-19.md
+Path: notes/daily/2026/2026-02-19.md
 
 ```md
 ---
@@ -190,7 +204,7 @@ Task list for tomorrow:
 ```
 
 ## Source 5
-Path: /Users/ncowen/repos/Work-Notes-Codex/notes/daily/2026/2026-02-20.md
+Path: notes/daily/2026/2026-02-20.md
 
 ```md
 ---

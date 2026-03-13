@@ -29,6 +29,15 @@ voice:
     - final/monthly
   profile_path: cache/style-profile.json
 
+prompting:
+  sample_writing_limit: 2
+  remember_rules:
+    - Be factual.
+    - Use action verbs.
+    - Include system, tool, and people names.
+    - Categorize appropriately (DevOps, Development, Architecture, Leadership, Training).
+    - Keep bullets concise but impactful.
+
 categories:
   - Top Outcomes
   - Problems Solved / Fires Prevented

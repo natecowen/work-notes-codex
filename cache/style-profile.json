@@ -1,8 +1,10 @@
 {
-  "generatedAt": "2026-03-13T03:02:15.477Z",
+  "generatedAt": "2026-03-13T21:16:07.169Z",
   "sampleFileCount": 2,
   "bulletCount": 0,
   "avgBulletWords": 12,
+  "headingCategoryCount": 0,
+  "commonHeadingCategories": [],
   "prefersCategoryPrefix": false,
   "commonCategoryPrefixes": []
 }

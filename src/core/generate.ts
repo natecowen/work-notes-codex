@@ -17,6 +17,30 @@ function renderAttendance(totals: ReturnType<typeof aggregateAttendance>): strin
   ].join("\n");
 }
 
+function sampleWritingLimit(config: AppConfig): number {
+  return config.prompting?.sample_writing_limit ?? 2;
+}
+
+function defaultRememberRules(): string[] {
+  return [
+    "Be factual.",
+    "Use action verbs.",
+    "Include system, tool, and people names when available.",
+    "Categorize appropriately (DevOps, Development, Architecture, Leadership, Training).",
+    "Keep bullets concise but impactful."
+  ];
+}
+
+function rememberRules(config: AppConfig): string[] {
+  return config.prompting?.remember_rules && config.prompting.remember_rules.length > 0
+    ? config.prompting.remember_rules
+    : defaultRememberRules();
+}
+
+function renderRememberBlock(config: AppConfig, finalInstruction: string): string {
+  return ["Remember:", ...rememberRules(config).map((rule) => `- ${rule}`), "", finalInstruction].join("\n");
+}
+
 async function resolveStyleInstruction(cwd: string, config: AppConfig, warnings: string[], fallback: string): Promise<string> {
   let styleInstruction = fallback;
   if (config.voice.style_profile_from_samples) {
@@ -128,7 +152,9 @@ export async function generateWeeklyDraft(
     `Meetings:\n${meetings.map((m) => `- ${m}`).join("\n") || "- None"}`,
     `Attendance:\n${attendanceMd}`,
     "",
-    `Template:\n${template}`
+    `Template:\n${template}`,
+    "",
+    renderRememberBlock(config, "Generate the weekly summary now as markdown.")
   ].join("\n");
 
   let content = deterministicWeekly(fridayIso, allOpenTasks, outcomes, meetings, attendanceMd);
@@ -167,7 +193,7 @@ export async function exportWeeklyPrompt(
   const attendanceMd = renderAttendance(attendance);
   const templatePath = path.resolve(cwd, config.paths.templates_dir, "weekly.md");
   const template = await readText(templatePath);
-  const samples = await loadSampleWritingExamples(cwd, config);
+  const samples = await loadSampleWritingExamples(cwd, config, sampleWritingLimit(config));
   const sourceBlocks = await Promise.all(
     entries.map(async (entry) => ({
       path: path.relative(cwd, entry.sourcePath),
@@ -195,6 +221,8 @@ export async function exportWeeklyPrompt(
     "Use the daily notes below as the source of truth.",
     "Use the sample writing only for tone and phrasing, not as factual source material.",
     "Do not invent meetings, outcomes, risks, or blockers.",
+    "",
+    renderRememberBlock(config, "Generate the weekly summary now in a downloadable .md file."),
     "",
     "## Target Week",
     `Friday date: ${fridayIso}`,
@@ -245,7 +273,9 @@ export async function generateMonthlyDraft(
     "Weekly inputs:",
     ...weeklyBodies.map((body, idx) => `## Weekly ${idx + 1}\n${body}`),
     "",
-    `Template:\n${template}`
+    `Template:\n${template}`,
+    "",
+    renderRememberBlock(config, "Generate the monthly summary now as markdown.")
   ].join("\n");
 
   let content = template
@@ -297,7 +327,7 @@ export async function exportMonthlyPrompt(
   }));
   const templatePath = path.resolve(cwd, config.paths.templates_dir, "monthly.md");
   const template = await readText(templatePath);
-  const samples = await loadSampleWritingExamples(cwd, config);
+  const samples = await loadSampleWritingExamples(cwd, config, sampleWritingLimit(config));
   const fileName = monthFileName(month);
 
   const prompt = [
@@ -319,6 +349,8 @@ export async function exportMonthlyPrompt(
     "Use the weekly summaries below as the source of truth.",
     "Use the sample writing only for tone and phrasing, not as factual source material.",
     "Do not invent accomplishments, blockers, or risks.",
+    "",
+    renderRememberBlock(config, "Generate the monthly summary now in a downloadable .md file."),
     "",
     "## Target Month",
     `Month: ${month}`,

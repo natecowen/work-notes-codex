@@ -25,6 +25,10 @@ export interface AppConfig {
     sample_dirs?: string[];
     profile_path?: string;
   };
+  prompting?: {
+    sample_writing_limit?: number;
+    remember_rules?: string[];
+  };
   categories: string[];
   attendance: {
     workdays_only: boolean;
@@ -99,6 +103,8 @@ export interface VoiceStyleProfile {
   sampleFileCount: number;
   bulletCount: number;
   avgBulletWords: number;
+  headingCategoryCount: number;
+  commonHeadingCategories: string[];
   prefersCategoryPrefix: boolean;
   commonCategoryPrefixes: string[];
 }

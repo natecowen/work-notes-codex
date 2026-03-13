@@ -2,11 +2,16 @@
 
 Use this prompt in another LLM when local generation is unavailable or not good enough.
 
+## Warning
+Review this prompt package before sending it to any external AI service.
+It may contain sensitive internal work details, names, systems, or project context copied from your notes.
+
 ## Instructions For The LLM
 Create exactly one markdown file named `2026-02-Monthly.md`.
 Return only the markdown file contents. Do not include commentary, explanation, or code fences around the final answer.
 If the UI supports file export or download, make the result a downloadable markdown file with that file name.
 Preserve the monthly template structure and headers exactly.
+Replace all template placeholders with real content. Do not leave placeholder tokens like `{{MONTH}}` in the final file.
 Voice constraints:
 - Facts only. No hype, no fluff, no motivational tone.
 - Use concise bullets and direct statements.
@@ -17,6 +22,15 @@ Voice constraints:
 Use the weekly summaries below as the source of truth.
 Use the sample writing only for tone and phrasing, not as factual source material.
 Do not invent accomplishments, blockers, or risks.
+
+Remember:
+- Be factual.
+- Use action verbs.
+- Include system, tool, and people names.
+- Categorize appropriately (DevOps, Development, Architecture, Leadership, Training).
+- Keep bullets concise but impactful.
+
+Generate the monthly summary now in a downloadable .md file.
 
 ## Target Month
 Month: 2026-02

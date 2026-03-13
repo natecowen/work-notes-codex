@@ -77,6 +77,10 @@ voice
     console.log(`Sample files: ${profile.sampleFileCount}`);
     console.log(`Bullet lines: ${profile.bulletCount}`);
     console.log(`Avg bullet words: ${profile.avgBulletWords}`);
+    console.log(`Heading categories: ${profile.headingCategoryCount}`);
+    if (profile.commonHeadingCategories.length > 0) {
+      console.log(`Top heading categories: ${profile.commonHeadingCategories.join(", ")}`);
+    }
     console.log(`Prefers category prefix: ${profile.prefersCategoryPrefix ? "yes" : "no"}`);
     if (profile.commonCategoryPrefixes.length > 0) {
       console.log(`Common prefixes: ${profile.commonCategoryPrefixes.join(", ")}`);

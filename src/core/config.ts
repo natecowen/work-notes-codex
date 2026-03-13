@@ -28,4 +28,13 @@ function validateConfig(config: AppConfig): void {
   if (config.voice.style_profile_from_samples && config.voice.sample_dirs && !Array.isArray(config.voice.sample_dirs)) {
     throw new Error("Invalid config: voice.sample_dirs must be a list when provided.");
   }
+  if (
+    config.prompting?.sample_writing_limit !== undefined &&
+    (!Number.isInteger(config.prompting.sample_writing_limit) || config.prompting.sample_writing_limit < 1)
+  ) {
+    throw new Error("Invalid config: prompting.sample_writing_limit must be an integer >= 1.");
+  }
+  if (config.prompting?.remember_rules && !Array.isArray(config.prompting.remember_rules)) {
+    throw new Error("Invalid config: prompting.remember_rules must be a list when provided.");
+  }
 }
