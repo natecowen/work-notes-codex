@@ -2,6 +2,8 @@
 
 Local-first TypeScript CLI to turn daily markdown notes into weekly/monthly summaries and attendance reports, with human approval before finalizing outputs.
 
+See also: [V1 plan](../docs/v1-plan.md) and [future enhancements](../docs/future-enhancements.md).
+
 ## Goals
 - Keep daily entry fast (10-15 minutes).
 - Generate weekly summary with a ~5 minute review.
