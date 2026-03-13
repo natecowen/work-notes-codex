@@ -18,35 +18,61 @@ Local-first TypeScript CLI to turn daily markdown notes into weekly/monthly summ
 - Require approval before promoting drafts to final.
 
 ## File/Folder Layout
-```text
-work-notes-reporter/
-  config/
-    config.yaml
-  notes/
-    daily/
-      2026/
-        2026-02-17.md
-    weekly/
-      2026/
-        2026-02-20-ISOWeek.md
-    monthly/
-      2026/
-        2026-01-Monthly.md
-  templates/
-    daily.md
-    weekly.md
-    monthly.md
-  drafts/
-    weekly/
-    monthly/
-  final/
-    weekly/
-    monthly/
-  reports/
-    attendance/
-  cache/
-    index.json
+```yaml
+work-notes-reporter:
+  config:
+    config.yaml: app configuration for paths, model settings, categories, attendance rules, and voice settings
+  notes:
+    daily:
+      "YYYY/YYYY-MM-DD.md": your main daily input files; write or generate one per workday here
+    weekly:
+      "YYYY/YYYY-MM-DD-ISOWeek.md": your real weekly summaries; used as historical records and monthly input
+    monthly:
+      "YYYY/YYYY-MM-Monthly.md": your real monthly summaries and historical archive
+  templates:
+    daily.md: editable daily note template used by `generate daily` and `generate dailies`
+    weekly.md: editable weekly output template used during weekly generation
+    monthly.md: editable monthly output template used during monthly generation
+  drafts:
+    weekly: generated weekly drafts waiting for your review
+    monthly: generated monthly drafts waiting for your review
+  final:
+    weekly: approved weekly outputs copied from drafts
+    monthly: approved monthly outputs copied from drafts
+  reports:
+    attendance: generated attendance reports for week, month, or custom date range
+  cache:
+    index.json: parsed daily-note index, validation errors, and approval audit trail
+    style-profile.json: derived voice/style profile built from your sample weekly/monthly writing
+  src:
+    "*.ts": application source code
+  dist:
+    "*.js": compiled runtime output after `npm run build`
 ```
+
+## Where You Work
+You normally touch these folders directly:
+
+- `notes/daily` for daily capture.
+- `notes/weekly` for finalized weekly summaries you want to keep as source/history.
+- `notes/monthly` for finalized monthly summaries you want to keep as source/history.
+- `templates` to change the generated markdown structure.
+- `config/config.yaml` to change app behavior.
+
+The app mainly writes to:
+
+- `drafts/*` for generated drafts.
+- `final/*` for approved copies of drafts.
+- `reports/attendance` for generated attendance reports.
+- `cache/*` for machine-readable artifacts.
+
+Recommended workflow:
+
+1. Generate or create daily notes in `notes/daily`.
+2. Fill in daily notes during the week.
+3. Generate a weekly draft into `drafts/weekly`.
+4. Review and approve the weekly draft, then keep finalized weekly summaries in `notes/weekly` or `final/weekly`.
+5. Generate monthly drafts from your weekly summaries.
 
 ## Naming Rules
 - Daily: `YYYY-MM-DD.md`
@@ -91,6 +117,79 @@ Task list for tomorrow:
   3. Cross-Team Impact & Leadership
   4. Risks & Blockers
   5. Next Month Focus
+
+## Sample Writing And Voice Profile
+The app does not include built-in sample writing from you. You provide that by placing your real weekly and monthly summaries in the configured sample folders.
+
+By default, the app learns your style from:
+
+- `notes/weekly`
+- `notes/monthly`
+- `final/weekly`
+- `final/monthly`
+
+That list comes from `voice.sample_dirs` in `config/config.yaml`.
+
+What the app learns from those files:
+
+- average bullet length
+- whether you tend to prefix bullets with category labels like `Architecture:` or `Leadership:`
+- common short prefixes used in your summaries
+
+What it does not currently do:
+
+- store a full copy of your writing in a database
+- ship with sample writing for you
+- export a reusable prompt package for another AI provider
+
+To build or refresh the style profile after adding your own weekly/monthly samples:
+
+```bash
+npm run dev -- voice profile
+```
+
+This writes:
+
+- `cache/style-profile.json`
+
+If you want stronger style matching, add more real weekly/monthly summaries into the sample folders above before running `voice profile`.
+
+## Customizing The App
+Most customization happens in two places:
+
+1. `config/config.yaml`
+2. `templates/*.md`
+
+Use `config/config.yaml` when you want to change behavior:
+
+- `paths.*`: move where notes, drafts, finals, reports, or cache files live.
+- `llm.model`: switch the default Ollama model.
+- `llm.temperature` and `llm.max_tokens`: tighten or loosen generation behavior.
+- `voice.sample_dirs`: choose which folders count as your sample writing.
+- `voice.profile_path`: choose where the derived style profile is stored.
+- `categories`: change the fixed category list used by the app.
+- `attendance.values`: define allowed attendance values.
+- `tasks.open_marker` and `tasks.done_marker`: change checkbox markers if you use a different format.
+- `tags.input_mode`: control whether tags are expected in frontmatter, inline, or both.
+
+Use `templates/*.md` when you want to change output shape:
+
+- `templates/daily.md`: change the default daily note structure created by scaffolding commands.
+- `templates/weekly.md`: change the weekly headings, ordering, or placeholder layout.
+- `templates/monthly.md`: change the monthly headings and recap structure.
+
+Current template placeholders:
+
+- `templates/daily.md`: `{{DATE}}`
+- `templates/weekly.md`: `{{FRIDAY}}`, `{{TASKS_FROM_LAST_WEEK}}`, `{{KEY_OUTCOMES}}`, `{{FIRES_PREVENTED}}`, `{{CROSS_TEAM_IMPACT}}`, `{{ATTENDANCE_SUMMARY}}`, `{{NEXT_WEEK_TASKS}}`
+- `templates/monthly.md`: `{{MONTH}}`, `{{TOP_OUTCOMES}}`, `{{FIRES}}`, `{{IMPACT}}`, `{{RISKS}}`, `{{NEXT_FOCUS}}`
+
+Customization examples:
+
+- Want your notes somewhere else: change `paths.daily_notes_dir`, `paths.weekly_notes_dir`, and `paths.monthly_notes_dir`.
+- Want stronger voice matching: add more of your real weekly/monthly summaries into the folders listed in `voice.sample_dirs`, then run `npm run dev -- voice profile`.
+- Want a different weekly format: edit `templates/weekly.md` and keep the required placeholders.
+- Want different attendance labels like `vacation` or `pto`: update `attendance.values` and then use those values in daily frontmatter.
 
 ## Command Reference (`worklog`)
 Use these only after setting up the global command in "Run Modes".
