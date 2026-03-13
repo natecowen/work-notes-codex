@@ -1,0 +1,48 @@
+version: 1
+paths:
+  daily_notes_dir: notes/daily
+  weekly_notes_dir: notes/weekly
+  monthly_notes_dir: notes/monthly
+  templates_dir: templates
+  drafts_dir: drafts
+  final_dir: final
+  reports_dir: reports
+  cache_dir: cache
+
+llm:
+  provider: ollama
+  model: llama3.1:8b
+  temperature: 0.1
+  max_tokens: 1600
+  endpoint: http://127.0.0.1:11434/api/generate
+
+voice:
+  mode: facts_only
+  style_profile_from_samples: true
+  sample_dirs:
+    - notes/weekly
+    - notes/monthly
+    - final/weekly
+    - final/monthly
+  profile_path: cache/style-profile.json
+
+categories:
+  - Top Outcomes
+  - Problems Solved / Fires Prevented
+  - Cross-Team Impact & Leadership
+  - Risks & Blockers
+  - Next Month Focus
+
+attendance:
+  workdays_only: true
+  values: [office, wfh, holiday, sick, vacation]
+  missing_policy: warn
+
+tasks:
+  carry_forward_enabled: true
+  open_marker: "[ ]"
+  done_marker: "[x]"
+
+tags:
+  enabled: true
+  input_mode: frontmatter_or_inline

@@ -1,0 +1,74 @@
+{
+  "generatedAt": "2026-02-24T03:35:01.733Z",
+  "totalRows": 5,
+  "totalErrors": 0,
+  "rows": [
+    {
+      "date": "2026-02-16",
+      "attendance": "office",
+      "tags": [],
+      "tasksOpenCount": 1,
+      "tasksDoneCount": 0,
+      "meetingsCount": 0,
+      "approved": false,
+      "sourcePath": "notes/daily/2026/2026-02-16.md"
+    },
+    {
+      "date": "2026-02-17",
+      "attendance": "office",
+      "tags": [],
+      "tasksOpenCount": 1,
+      "tasksDoneCount": 0,
+      "meetingsCount": 0,
+      "approved": false,
+      "sourcePath": "notes/daily/2026/2026-02-17.md"
+    },
+    {
+      "date": "2026-02-18",
+      "attendance": "office",
+      "tags": [],
+      "tasksOpenCount": 1,
+      "tasksDoneCount": 0,
+      "meetingsCount": 0,
+      "approved": false,
+      "sourcePath": "notes/daily/2026/2026-02-18.md"
+    },
+    {
+      "date": "2026-02-19",
+      "attendance": "office",
+      "tags": [],
+      "tasksOpenCount": 1,
+      "tasksDoneCount": 0,
+      "meetingsCount": 0,
+      "approved": false,
+      "sourcePath": "notes/daily/2026/2026-02-19.md"
+    },
+    {
+      "date": "2026-02-20",
+      "attendance": "office",
+      "tags": [],
+      "tasksOpenCount": 1,
+      "tasksDoneCount": 0,
+      "meetingsCount": 0,
+      "approved": false,
+      "sourcePath": "notes/daily/2026/2026-02-20.md"
+    }
+  ],
+  "errors": [],
+  "approvals": [
+    {
+      "approvedAt": "2026-02-24T03:34:55.564Z",
+      "periodType": "weekly",
+      "periodKey": "2026-02-20",
+      "draftPath": "drafts/weekly/2026-02-20-ISOWeek.md",
+      "finalPath": "final/weekly/2026-02-20-ISOWeek.md"
+    },
+    {
+      "approvedAt": "2026-02-24T03:34:55.615Z",
+      "periodType": "monthly",
+      "periodKey": "2026-02",
+      "draftPath": "drafts/monthly/2026-02-Monthly.md",
+      "finalPath": "final/monthly/2026-02-Monthly.md"
+    }
+  ]
+}
