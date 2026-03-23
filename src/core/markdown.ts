@@ -67,6 +67,12 @@ function isCategoryHeadingLine(line: string): boolean {
   return /^(-\s*)?[A-Za-z][A-Za-z\s/()-]+:\s*$/.test(line.trim());
 }
 
+function extractCategoryLabel(line: string): string | null {
+  const trimmed = line.trim().replace(/^\-\s*/, "");
+  const match = trimmed.match(/^([A-Za-z][A-Za-z\s/&()-]+):\s*$/);
+  return match ? match[1] : null;
+}
+
 function normalizeWorkLines(lines: string[]): string[] {
   return lines
     .map((line) => normalizeLine(line))
@@ -90,10 +96,9 @@ function parseWorkSection(lines: string[]): { workLines: string[]; workCategorie
 
   for (const line of lines) {
     const markdownHeading = parseMarkdownHeading(line);
-    const headingLabel = markdownHeading?.label ?? line.trim();
-    const categoryMatch = headingLabel.match(/^([A-Za-z][A-Za-z\s/&()-]+):\s*$/);
-    if (categoryMatch) {
-      currentCategory = ensureCategory(categoryMatch[1]);
+    const categoryLabel = markdownHeading ? extractCategoryLabel(markdownHeading.label) : extractCategoryLabel(line);
+    if (categoryLabel) {
+      currentCategory = ensureCategory(categoryLabel);
       continue;
     }
 
