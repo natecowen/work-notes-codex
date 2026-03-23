@@ -21,7 +21,6 @@ This file tracks ideas discussed after the initial V1 scope. These items are not
 - Add redaction rules before sending content to any external AI.
 
 ## Data Sources
-- Add fallback logic for monthly generation and monthly prompt export to read from `final/weekly` when `notes/weekly` is empty.
 - Add optional Outlook or calendar integration later if automatic meeting ingest becomes useful and allowed.
 
 ## Engineering

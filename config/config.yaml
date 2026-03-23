@@ -5,7 +5,6 @@ paths:
   monthly_notes_dir: notes/monthly
   templates_dir: templates
   drafts_dir: drafts
-  final_dir: final
   reports_dir: reports
   cache_dir: cache
 
@@ -22,8 +21,6 @@ voice:
   sample_dirs:
     - notes/weekly
     - notes/monthly
-    - final/weekly
-    - final/monthly
   profile_path: cache/style-profile.json
 
 prompting:

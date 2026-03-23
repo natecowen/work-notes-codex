@@ -181,7 +181,7 @@ report
     }
   );
 
-const approve = program.command("approve").description("Approve and promote drafts.");
+const approve = program.command("approve").description("Approve drafts into notes.");
 
 approve
   .command("weekly")
@@ -190,7 +190,7 @@ approve
     const cwd = process.cwd();
     const config = await loadConfig(cwd);
     const result = await approveWeekly(cwd, config, opts.friday);
-    console.log(`Approved weekly: ${path.relative(cwd, result.finalPath)}`);
+    console.log(`Approved weekly: ${path.relative(cwd, result.approvedPath)}`);
     console.log("Audit appended: cache/index.json");
   });
 
@@ -201,7 +201,7 @@ approve
     const cwd = process.cwd();
     const config = await loadConfig(cwd);
     const result = await approveMonthly(cwd, config, opts.month);
-    console.log(`Approved monthly: ${path.relative(cwd, result.finalPath)}`);
+    console.log(`Approved monthly: ${path.relative(cwd, result.approvedPath)}`);
     console.log("Audit appended: cache/index.json");
   });
 

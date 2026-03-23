@@ -52,7 +52,7 @@
 7. Approval Workflow
 - `approve weekly` and `approve monthly` commands.
 - Set `approved: true` metadata.
-- Promote to `final/`.
+- Move approved drafts into `notes/`.
 - Write approval audit to cache index.
 
 8. Voice Tuning
@@ -99,7 +99,7 @@
 - Integration tests:
   - weekly generation with missing day warnings
   - monthly generation from weekly docs
-  - approve flow draft->final promotion
+  - approve flow draft->notes move
 
 ## Definition of Done (V1)
 - Daily scaffolding commands generate single day and full workweek files from template.

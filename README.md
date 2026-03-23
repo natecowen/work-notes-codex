@@ -1,6 +1,6 @@
 # Work Notes Reporter
 
-Local-first TypeScript CLI to turn daily markdown notes into weekly/monthly summaries and attendance reports, with human approval before finalizing outputs.
+Local-first TypeScript CLI to turn daily markdown notes into weekly/monthly summaries and attendance reports, with human approval before approved outputs move into `notes/`.
 
 See also: [V1 plan](../docs/v1-plan.md) and [future enhancements](../docs/future-enhancements.md).
 
@@ -17,7 +17,7 @@ See also: [V1 plan](../docs/v1-plan.md) and [future enhancements](../docs/future
 - Generate monthly markdown drafts using `YYYY-MM-Monthly.md`.
 - Track and roll up attendance (M-F only).
 - Carry unfinished task items forward day-to-day and week-to-week.
-- Require approval before promoting drafts to final.
+- Require approval before moving drafts into notes.
 
 ## File/Folder Layout
 ```yaml
@@ -41,9 +41,6 @@ work-notes-reporter:
     prompts:
       weekly: exported prompt packages for generating weekly summaries in another LLM
       monthly: exported prompt packages for generating monthly summaries in another LLM
-  final:
-    weekly: approved weekly outputs copied from drafts
-    monthly: approved monthly outputs copied from drafts
   reports:
     attendance: generated attendance reports for week, month, or custom date range
   cache:
@@ -67,7 +64,7 @@ You normally touch these folders directly:
 The app mainly writes to:
 
 - `drafts/*` for generated drafts.
-- `final/*` for approved copies of drafts.
+- `notes/weekly` and `notes/monthly` for approved summaries moved out of drafts.
 - `reports/attendance` for generated attendance reports.
 - `cache/*` for machine-readable artifacts.
 
@@ -76,7 +73,7 @@ Recommended workflow:
 1. Generate or create daily notes in `notes/daily`.
 2. Fill in daily notes during the week.
 3. Generate a weekly draft into `drafts/weekly`.
-4. Review and approve the weekly draft, then keep finalized weekly summaries in `notes/weekly` or `final/weekly`.
+4. Review and approve the weekly draft, which moves it into `notes/weekly`.
 5. Generate monthly drafts from your weekly summaries.
 
 ## Naming Rules
@@ -130,8 +127,6 @@ By default, the app learns your style from:
 
 - `notes/weekly`
 - `notes/monthly`
-- `final/weekly`
-- `final/monthly`
 
 That list comes from `voice.sample_dirs` in `config/config.yaml`.
 
@@ -167,7 +162,7 @@ Most customization happens in two places:
 
 Use `config/config.yaml` when you want to change behavior:
 
-- `paths.*`: move where notes, drafts, finals, reports, or cache files live.
+- `paths.*`: move where notes, drafts, reports, or cache files live.
 - `llm.model`: switch the default Ollama model.
 - `llm.temperature` and `llm.max_tokens`: tighten or loosen generation behavior.
 - `voice.sample_dirs`: choose which folders count as your sample writing.
@@ -229,8 +224,8 @@ paths:
   monthly_notes_dir: notes/monthly
   templates_dir: templates
   drafts_dir: drafts
-  final_dir: final
   reports_dir: reports
+  cache_dir: cache
 
 llm:
   provider: ollama
@@ -244,8 +239,6 @@ voice:
   sample_dirs:
     - notes/weekly
     - notes/monthly
-    - final/weekly
-    - final/monthly
   profile_path: cache/style-profile.json
 
 prompting:
@@ -433,7 +426,7 @@ Prompt packages are written to files instead of only printing to the terminal so
 Security note:
 
 - This repo should be treated as private.
-- Generated notes, prompt packages, finals, reports, and cache files may contain sensitive internal work details.
+- Generated notes, prompt packages, drafts, reports, and cache files may contain sensitive internal work details.
 - Review exported prompt packages before sending them to any external AI service.
 
 What exported weekly prompt packages include:
@@ -462,7 +455,7 @@ Output locations:
 - Review and edit draft.
 - Approve via command (`worklog approve ...`) which:
   - sets metadata `approved: true`
-  - copies file into `final/`
+  - moves file into `notes/weekly` or `notes/monthly`
   - appends an audit event into `cache/index.json` under `approvals`
 
 ## Notes

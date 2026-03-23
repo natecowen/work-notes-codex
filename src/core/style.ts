@@ -9,7 +9,7 @@ function profilePath(cwd: string, config: AppConfig): string {
 }
 
 function sampleDirs(cwd: string, config: AppConfig): string[] {
-  const defaults = [config.paths.weekly_notes_dir, config.paths.monthly_notes_dir, "final/weekly", "final/monthly"];
+  const defaults = [config.paths.weekly_notes_dir, config.paths.monthly_notes_dir];
   const dirs = config.voice.sample_dirs && config.voice.sample_dirs.length > 0 ? config.voice.sample_dirs : defaults;
   return dirs.map((dir) => path.resolve(cwd, dir));
 }

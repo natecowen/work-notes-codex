@@ -87,40 +87,89 @@ function renderSourceBlocks(blocks: Array<{ path: string; content: string }>, he
   ].join("\n\n");
 }
 
-function deterministicWeekly(
+function renderBullets(lines: string[], emptyLine = "-"): string {
+  return lines.length > 0 ? lines.map((line) => `- ${line}`).join("\n") : emptyLine;
+}
+
+function renderWeeklyFallback(
+  template: string,
   friday: string,
   carryTasks: string[],
   outcomes: string[],
-  meetings: string[],
   attendanceMd: string
 ): string {
-  return [
-    `# Week of: ${friday}`,
-    "",
-    "Task list from last Week:",
-    ...(carryTasks.length > 0 ? carryTasks.map((t) => `- ${t}`) : ["- None"]),
-    "",
-    "Work (Facts Only):",
-    "Key outcomes shipped/delivered:",
-    ...(outcomes.length > 0 ? outcomes.map((o) => `- ${o}`) : ["- None captured"]),
-    "",
-    "Problems solved / fires prevented:",
-    "-",
-    "",
-    "Cross-team impact:",
-    "-",
-    "",
-    "Attendance Summary:",
-    attendanceMd,
-    "",
-    "Meetings Captured:",
-    ...(meetings.length > 0 ? meetings.map((m) => `- ${m}`) : ["- None captured"]),
-    "",
-    "Task list for Next Week (Max 3)",
-    "-",
-    "-",
-    "-"
-  ].join("\n");
+  return template
+    .replaceAll("{{FRIDAY}}", friday)
+    .replaceAll("{{TASKS_FROM_LAST_WEEK}}", renderBullets(carryTasks, "- None"))
+    .replaceAll("{{KEY_OUTCOMES}}", renderBullets(outcomes, "- None captured"))
+    .replaceAll("{{FIRES_PREVENTED}}", "-")
+    .replaceAll("{{CROSS_TEAM_IMPACT}}", "-")
+    .replaceAll("{{ATTENDANCE_SUMMARY}}", attendanceMd)
+    .replaceAll("{{NEXT_WEEK_TASKS}}", ["-", "-", "-"].join("\n"));
+}
+
+function renderMonthlyFallback(template: string, month: string): string {
+  return template
+    .replaceAll("{{MONTH}}", month)
+    .replaceAll("{{TOP_OUTCOMES}}", "-")
+    .replaceAll("{{FIRES}}", "-")
+    .replaceAll("{{IMPACT}}", "-")
+    .replaceAll("{{RISKS}}", "-")
+    .replaceAll("{{NEXT_FOCUS}}", "-");
+}
+
+function hasTemplatePlaceholders(content: string): boolean {
+  return /{{[^}]+}}/.test(content);
+}
+
+function normalizeTemplate(content: string): string {
+  return content.trim().replace(/\r\n/g, "\n");
+}
+
+export function isValidWeeklyOllamaOutput(template: string, generated: string, fridayIso: string): boolean {
+  const normalizedGenerated = normalizeTemplate(generated);
+  if (!normalizedGenerated) return false;
+  if (normalizedGenerated === normalizeTemplate(template)) return false;
+  if (hasTemplatePlaceholders(normalizedGenerated)) return false;
+  if (!normalizedGenerated.includes("Task list from last Week:")) return false;
+  if (!normalizedGenerated.includes("Attendance Summary:")) return false;
+  if (!normalizedGenerated.includes(fridayIso)) return false;
+  return true;
+}
+
+export function isValidMonthlyOllamaOutput(template: string, generated: string, month: string): boolean {
+  const normalizedGenerated = normalizeTemplate(generated);
+  if (!normalizedGenerated) return false;
+  if (normalizedGenerated === normalizeTemplate(template)) return false;
+  if (hasTemplatePlaceholders(normalizedGenerated)) return false;
+  if (!normalizedGenerated.includes("Top Outcomes")) return false;
+  if (!normalizedGenerated.includes("Cross-Team Impact")) return false;
+  if (!normalizedGenerated.includes(month)) return false;
+  return true;
+}
+
+async function loadWeeklyInputsForMonth(
+  cwd: string,
+  config: AppConfig,
+  month: string
+): Promise<Array<{ path: string; content: string }>> {
+  const year = month.slice(0, 4);
+  const candidateDir = path.resolve(cwd, config.paths.weekly_notes_dir, year);
+  const files: string[] = [];
+
+  const inDir = await listMarkdownFiles(candidateDir);
+  for (const file of inDir) {
+    const baseName = path.basename(file);
+    if (!monthKey(baseName.slice(0, 10)).startsWith(month)) continue;
+    files.push(file);
+  }
+
+  files.sort();
+  const contents = await Promise.all(files.map((file) => readText(file)));
+  return files.map((file, index) => ({
+    path: path.relative(cwd, file),
+    content: contents[index]
+  }));
 }
 
 export async function generateWeeklyDraft(
@@ -135,7 +184,7 @@ export async function generateWeeklyDraft(
   if (missingDates.length > 0) warnings.push(`Missing daily files: ${missingDates.join(", ")}`);
 
   const allOpenTasks = entries.flatMap((e) => e.tasksOpen);
-  const outcomes = entries.flatMap((e) => e.workLines).filter((line) => line.startsWith("-"));
+  const outcomes = entries.flatMap((e) => e.workLines.map((line) => line.replace(/^\-\s*/, "").trim())).filter(Boolean);
   const meetings = [...new Set(entries.flatMap((e) => e.meetings))];
   const attendance = aggregateAttendance(entries);
   const attendanceMd = renderAttendance(attendance);
@@ -157,14 +206,14 @@ export async function generateWeeklyDraft(
     renderRememberBlock(config, "Generate the weekly summary now as markdown.")
   ].join("\n");
 
-  let content = deterministicWeekly(fridayIso, allOpenTasks, outcomes, meetings, attendanceMd);
+  let content = renderWeeklyFallback(template, fridayIso, allOpenTasks, outcomes, attendanceMd);
   try {
     const generated = await generateWithOllama(
       config,
       "You are a strict formatter. Output only valid markdown using the provided template format.",
       prompt
     );
-    if (generated.includes("Task list from last Week") && generated.includes("Attendance Summary")) {
+    if (isValidWeeklyOllamaOutput(template, generated, fridayIso)) {
       content = generated;
     } else {
       warnings.push("Ollama output did not match expected format; used deterministic fallback.");
@@ -254,14 +303,10 @@ export async function generateMonthlyDraft(
 ): Promise<{ outputPath: string; warnings: string[] }> {
   const warnings: string[] = [];
   const styleInstruction = await resolveStyleInstruction(cwd, config, warnings, "Facts only. Do not invent outcomes.");
-  const year = month.slice(0, 4);
-  const weeklyDir = path.resolve(cwd, config.paths.weekly_notes_dir, year);
-  const weeklyFiles = (await listMarkdownFiles(weeklyDir)).filter((f) =>
-    monthKey(path.basename(f).slice(0, 10)).startsWith(month)
-  );
-  if (weeklyFiles.length === 0) warnings.push(`No weekly files found for ${month} in ${weeklyDir}`);
-
-  const weeklyBodies = await Promise.all(weeklyFiles.map((file) => readText(file)));
+  const weeklyInputs = await loadWeeklyInputsForMonth(cwd, config, month);
+  if (weeklyInputs.length === 0) {
+    warnings.push(`No weekly files found for ${month} in ${config.paths.weekly_notes_dir}`);
+  }
   const templatePath = path.resolve(cwd, config.paths.templates_dir, "monthly.md");
   const template = await readText(templatePath);
 
@@ -271,20 +316,14 @@ export async function generateMonthlyDraft(
     "",
     `Month: ${month}`,
     "Weekly inputs:",
-    ...weeklyBodies.map((body, idx) => `## Weekly ${idx + 1}\n${body}`),
+    ...weeklyInputs.map((item, idx) => `## Weekly ${idx + 1}\nSource: ${item.path}\n${item.content}`),
     "",
     `Template:\n${template}`,
     "",
     renderRememberBlock(config, "Generate the monthly summary now as markdown.")
   ].join("\n");
 
-  let content = template
-    .replaceAll("{{MONTH}}", month)
-    .replaceAll("{{TOP_OUTCOMES}}", "-")
-    .replaceAll("{{FIRES}}", "-")
-    .replaceAll("{{IMPACT}}", "-")
-    .replaceAll("{{RISKS}}", "-")
-    .replaceAll("{{NEXT_FOCUS}}", "-");
+  let content = renderMonthlyFallback(template, month);
 
   try {
     const generated = await generateWithOllama(
@@ -292,7 +331,7 @@ export async function generateMonthlyDraft(
       "You are a strict formatter. Output only valid markdown using the provided template format.",
       prompt
     );
-    if (generated.includes("Top Outcomes") && generated.includes("Cross-Team Impact")) {
+    if (isValidMonthlyOllamaOutput(template, generated, month)) {
       content = generated;
     } else {
       warnings.push("Ollama output did not match expected monthly format; used fallback template.");
@@ -313,18 +352,10 @@ export async function exportMonthlyPrompt(
 ): Promise<{ outputPath: string; warnings: string[] }> {
   const warnings: string[] = [];
   const styleInstruction = await resolveStyleInstruction(cwd, config, warnings, "Facts only. Do not invent outcomes.");
-  const year = month.slice(0, 4);
-  const weeklyDir = path.resolve(cwd, config.paths.weekly_notes_dir, year);
-  const weeklyFiles = (await listMarkdownFiles(weeklyDir)).filter((f) =>
-    monthKey(path.basename(f).slice(0, 10)).startsWith(month)
-  );
-  if (weeklyFiles.length === 0) warnings.push(`No weekly files found for ${month} in ${weeklyDir}`);
-
-  const weeklyBodies = await Promise.all(weeklyFiles.map((file) => readText(file)));
-  const sourceBlocks = weeklyFiles.map((file, index) => ({
-    path: path.relative(cwd, file),
-    content: weeklyBodies[index]
-  }));
+  const weeklyInputs = await loadWeeklyInputsForMonth(cwd, config, month);
+  if (weeklyInputs.length === 0) {
+    warnings.push(`No weekly files found for ${month} in ${config.paths.weekly_notes_dir}`);
+  }
   const templatePath = path.resolve(cwd, config.paths.templates_dir, "monthly.md");
   const template = await readText(templatePath);
   const samples = await loadSampleWritingExamples(cwd, config, sampleWritingLimit(config));
@@ -363,7 +394,7 @@ export async function exportMonthlyPrompt(
     "## Sample Writing",
     renderSampleWritingBlocks(samples),
     "",
-    renderSourceBlocks(sourceBlocks, "## Source Weekly Notes")
+    renderSourceBlocks(weeklyInputs, "## Source Weekly Notes")
   ].join("\n");
 
   const outputPath = path.resolve(cwd, config.paths.drafts_dir, promptPath("", "monthly", month));

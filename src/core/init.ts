@@ -8,7 +8,6 @@ paths:
   monthly_notes_dir: notes/monthly
   templates_dir: templates
   drafts_dir: drafts
-  final_dir: final
   reports_dir: reports
   cache_dir: cache
 
@@ -25,8 +24,6 @@ voice:
   sample_dirs:
     - notes/weekly
     - notes/monthly
-    - final/weekly
-    - final/monthly
   profile_path: cache/style-profile.json
 
 prompting:
@@ -141,8 +138,6 @@ export async function runInit(cwd: string): Promise<void> {
     ensureDir(path.resolve(cwd, "notes/monthly")),
     ensureDir(path.resolve(cwd, "drafts/weekly")),
     ensureDir(path.resolve(cwd, "drafts/monthly")),
-    ensureDir(path.resolve(cwd, "final/weekly")),
-    ensureDir(path.resolve(cwd, "final/monthly")),
     ensureDir(path.resolve(cwd, "reports/attendance")),
     ensureDir(path.resolve(cwd, "cache"))
   ]);

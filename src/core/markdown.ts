@@ -12,10 +12,12 @@ function parseTasks(lines: string[], config: AppConfig): { open: string[]; done:
   for (const line of lines) {
     const trimmed = line.trim();
     if (trimmed.startsWith(`- ${config.tasks.open_marker}`)) {
-      open.push(trimmed.replace(`- ${config.tasks.open_marker}`, "").trim());
+      const task = trimmed.replace(`- ${config.tasks.open_marker}`, "").trim();
+      if (task) open.push(task);
     }
     if (trimmed.startsWith(`- ${config.tasks.done_marker}`)) {
-      done.push(trimmed.replace(`- ${config.tasks.done_marker}`, "").trim());
+      const task = trimmed.replace(`- ${config.tasks.done_marker}`, "").trim();
+      if (task) done.push(task);
     }
   }
   return { open, done };
@@ -39,6 +41,18 @@ function extractSection(body: string, header: string): string[] {
 function parseInlineTags(text: string): string[] {
   const matches = text.match(/(^|\s)#([a-zA-Z0-9-_]+)/g) ?? [];
   return matches.map((m) => m.trim().replace(/^#/, "").replace(/\s#/, ""));
+}
+
+function isCategoryHeadingLine(line: string): boolean {
+  return /^(-\s*)?[A-Za-z][A-Za-z\s/()-]+:\s*$/.test(line.trim());
+}
+
+function normalizeWorkLines(lines: string[]): string[] {
+  return lines
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => line !== "-")
+    .filter((line) => !isCategoryHeadingLine(line));
 }
 
 export function parseDailyMarkdown(filePath: string, raw: string, config: AppConfig): DailyEntry {
@@ -65,7 +79,7 @@ export function parseDailyMarkdown(filePath: string, raw: string, config: AppCon
   }
 
   const meetingsLines = extractSection(parsed.content, "Meetings").map(normalizeLine).filter(Boolean);
-  const workLines = extractSection(parsed.content, "Work").map((l) => l.trim()).filter(Boolean);
+  const workLines = normalizeWorkLines(extractSection(parsed.content, "Work"));
   const notesLines = extractSection(parsed.content, "Notes").map((l) => l.trim()).filter(Boolean);
 
   const allBodyLines = parsed.content.split(/\r?\n/);
@@ -89,6 +103,12 @@ export function parseDailyMarkdown(filePath: string, raw: string, config: AppCon
 
 export function setApprovedFrontmatter(raw: string): string {
   const parsed = matter(raw);
-  parsed.data = { ...parsed.data, approved: true };
+  const normalized = Object.fromEntries(
+    Object.entries(parsed.data).map(([key, value]) => [
+      key,
+      value instanceof Date ? value.toISOString().slice(0, 10) : value
+    ])
+  );
+  parsed.data = { ...normalized, approved: true };
   return matter.stringify(parsed.content, parsed.data);
 }

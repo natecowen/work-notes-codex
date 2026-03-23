@@ -29,6 +29,7 @@ export async function generateWithOllama(
     throw new Error(`Ollama request failed: ${response.status} ${response.statusText}`);
   }
   const json = (await response.json()) as OllamaResponse;
-  if (!json.response) throw new Error("Ollama returned empty response.");
-  return json.response.trim();
+  const content = json.response?.trim() ?? "";
+  if (!content) throw new Error("Ollama returned empty response.");
+  return content;
 }

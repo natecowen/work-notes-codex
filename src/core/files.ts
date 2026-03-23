@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, writeFile, copyFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, writeFile, rename } from "node:fs/promises";
 import { access } from "node:fs/promises";
 import path from "node:path";
 
@@ -46,9 +46,9 @@ export async function listMarkdownFilesRecursive(dirPath: string): Promise<strin
   }
 }
 
-export async function promoteFile(sourcePath: string, targetPath: string): Promise<void> {
+export async function moveFile(sourcePath: string, targetPath: string): Promise<void> {
   await mkdir(path.dirname(targetPath), { recursive: true });
-  await copyFile(sourcePath, targetPath);
+  await rename(sourcePath, targetPath);
 }
 
 export async function fileExists(filePath: string): Promise<boolean> {

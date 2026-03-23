@@ -8,7 +8,6 @@ export interface AppConfig {
     monthly_notes_dir: string;
     templates_dir: string;
     drafts_dir: string;
-    final_dir: string;
     reports_dir: string;
     cache_dir: string;
   };
@@ -86,7 +85,7 @@ export interface ApprovalAuditEvent {
   periodType: "weekly" | "monthly";
   periodKey: string;
   draftPath: string;
-  finalPath: string;
+  approvedPath: string;
 }
 
 export interface IndexCache {
