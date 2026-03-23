@@ -7,14 +7,12 @@ approved: false
 
 # Day: {{DATE}}
 
-Meetings:
+{{MEETINGS_LABEL}}:
 - 
 
-Work:
-- Architecture/Devops:
-- Leadership/Training:
-- Personal:
+{{WORK_LABEL}}:
+{{WORK_CATEGORIES}}
 
-Notes:
-Task list for tomorrow:
+{{NOTES_LABEL}}:
+{{TASKS_TOMORROW_LABEL}}:
 - [ ] 

@@ -2,11 +2,12 @@ import path from "node:path";
 import yaml from "js-yaml";
 import { readText } from "./files.js";
 import type { AppConfig } from "../types.js";
+import { normalizeConfigStructures, validateDailyStructure, validatePeriodStructure } from "./sections.js";
 
 export async function loadConfig(cwd: string, configPath = "config/config.yaml"): Promise<AppConfig> {
   const absolute = path.resolve(cwd, configPath);
   const raw = await readText(absolute);
-  const parsed = yaml.load(raw) as AppConfig;
+  const parsed = normalizeConfigStructures(yaml.load(raw) as AppConfig);
   const endpointOverride = process.env.WORKLOG_OLLAMA_ENDPOINT?.trim();
   if (endpointOverride) {
     parsed.llm.endpoint = endpointOverride;
@@ -37,4 +38,7 @@ function validateConfig(config: AppConfig): void {
   if (config.prompting?.remember_rules && !Array.isArray(config.prompting.remember_rules)) {
     throw new Error("Invalid config: prompting.remember_rules must be a list when provided.");
   }
+  validateDailyStructure(normalizeConfigStructures(config).daily!, "daily.sections");
+  validatePeriodStructure(normalizeConfigStructures(config).weekly!, "weekly.sections");
+  validatePeriodStructure(normalizeConfigStructures(config).monthly!, "monthly.sections");
 }

@@ -1,5 +1,6 @@
 import matter from "gray-matter";
-import type { AppConfig, Attendance, DailyEntry, WorkCategoryGroup } from "../types.js";
+import type { AppConfig, Attendance, DailyEntry, WorkCategoryGroup, DailySectionDefinition } from "../types.js";
+import { findDailySection, getDailyStructure, normalizeHeadingLabel } from "./sections.js";
 
 function normalizeLine(line: string): string {
   return line.trim().replace(/^\-\s*/, "").trim();
@@ -32,17 +33,18 @@ function parseMarkdownHeading(line: string): { depth: number; label: string } | 
   };
 }
 
-function extractSection(body: string, header: string): string[] {
+function extractSection(body: string, labels: string[], boundaryLabels = labels): string[] {
   const lines = body.split(/\r?\n/);
-  const target = `${header.toLowerCase()}:`;
+  const targets = new Set(labels.map((label) => normalizeHeadingLabel(label)));
   const startIdx = lines.findIndex((line) => {
     const heading = parseMarkdownHeading(line);
-    if (heading) return heading.label.toLowerCase() === target;
-    return line.trim().toLowerCase() === target;
+    if (heading) return targets.has(normalizeHeadingLabel(heading.label));
+    return targets.has(normalizeHeadingLabel(line.trim()));
   });
   if (startIdx < 0) return [];
 
   const startHeading = parseMarkdownHeading(lines[startIdx]);
+  const sectionLabels = new Set(boundaryLabels.map((label) => normalizeHeadingLabel(label)));
   const sectionLines: string[] = [];
   for (let i = startIdx + 1; i < lines.length; i += 1) {
     const line = lines[i];
@@ -50,7 +52,7 @@ function extractSection(body: string, header: string): string[] {
     if (heading && startHeading && heading.depth <= startHeading.depth) {
       break;
     }
-    if (!startHeading && /^[A-Za-z][A-Za-z\s/()-]+:\s*$/.test(line.trim())) {
+    if (!startHeading && sectionLabels.has(normalizeHeadingLabel(line.trim()))) {
       break;
     }
     sectionLines.push(line);
@@ -81,10 +83,16 @@ function normalizeWorkLines(lines: string[]): string[] {
     .filter((line) => !isCategoryHeadingLine(line));
 }
 
-function parseWorkSection(lines: string[]): { workLines: string[]; workCategories: WorkCategoryGroup[] } {
+function parseWorkSection(
+  lines: string[],
+  workSection: DailySectionDefinition | undefined
+): { workLines: string[]; workCategories: WorkCategoryGroup[] } {
   const workLines: string[] = [];
   const workCategories: WorkCategoryGroup[] = [];
   let currentCategory: WorkCategoryGroup | null = null;
+  const configuredCategories = new Map(
+    (workSection?.categories ?? []).map((category) => [normalizeHeadingLabel(category.label), category.label])
+  );
 
   const ensureCategory = (category: string): WorkCategoryGroup => {
     const existing = workCategories.find((group) => group.category === category);
@@ -98,7 +106,8 @@ function parseWorkSection(lines: string[]): { workLines: string[]; workCategorie
     const markdownHeading = parseMarkdownHeading(line);
     const categoryLabel = markdownHeading ? extractCategoryLabel(markdownHeading.label) : extractCategoryLabel(line);
     if (categoryLabel) {
-      currentCategory = ensureCategory(categoryLabel);
+      const normalized = normalizeHeadingLabel(categoryLabel);
+      currentCategory = ensureCategory(configuredCategories.get(normalized) ?? categoryLabel);
       continue;
     }
 
@@ -141,9 +150,30 @@ export function parseDailyMarkdown(filePath: string, raw: string, config: AppCon
     );
   }
 
-  const meetingsLines = extractSection(parsed.content, "Meetings").map(normalizeLine).filter(Boolean);
-  const { workLines, workCategories } = parseWorkSection(extractSection(parsed.content, "Work"));
-  const notesLines = extractSection(parsed.content, "Notes").map((l) => l.trim()).filter(Boolean);
+  const structure = getDailyStructure(config);
+  const managedLabels = structure.sections.map((section) => section.label);
+  const meetingsSection = findDailySection(config, "meetings");
+  const workSection = findDailySection(config, "work");
+  const notesSection = findDailySection(config, "notes");
+
+  const meetingsLines = extractSection(
+    parsed.content,
+    meetingsSection ? [meetingsSection.label] : ["Meetings"],
+    managedLabels
+  )
+    .map(normalizeLine)
+    .filter(Boolean);
+  const { workLines, workCategories } = parseWorkSection(
+    extractSection(parsed.content, workSection ? [workSection.label] : ["Work"], managedLabels),
+    workSection
+  );
+  const notesLines = extractSection(
+    parsed.content,
+    notesSection ? [notesSection.label] : ["Notes"],
+    managedLabels
+  )
+    .map((l) => l.trim())
+    .filter(Boolean);
 
   const allBodyLines = parsed.content.split(/\r?\n/);
   const tasks = parseTasks(allBodyLines, config);

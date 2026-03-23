@@ -1,4 +1,34 @@
 export type Attendance = "office" | "wfh" | "holiday" | "sick" | "vacation";
+export type SectionType = "bullet_list" | "categorized_list" | "kv_list" | "free_text";
+
+export interface SectionCategoryDefinition {
+  id: string;
+  label: string;
+}
+
+export interface DailySectionDefinition {
+  id: string;
+  label: string;
+  type: SectionType;
+  categories?: SectionCategoryDefinition[];
+}
+
+export interface OutputSectionDefinition {
+  id: string;
+  label: string;
+  type: SectionType;
+  placeholder: string;
+  source: string;
+  required?: boolean;
+}
+
+export interface DailyStructureConfig {
+  sections: DailySectionDefinition[];
+}
+
+export interface PeriodStructureConfig {
+  sections: OutputSectionDefinition[];
+}
 
 export interface WorkCategoryGroup {
   category: string;
@@ -48,6 +78,9 @@ export interface AppConfig {
     enabled: boolean;
     input_mode: "frontmatter" | "inline" | "frontmatter_or_inline";
   };
+  daily?: DailyStructureConfig;
+  weekly?: PeriodStructureConfig;
+  monthly?: PeriodStructureConfig;
 }
 
 export interface DailyEntry {

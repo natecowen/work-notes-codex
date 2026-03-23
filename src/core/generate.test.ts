@@ -130,8 +130,9 @@ Notes:
 }
 
 test("weekly validator rejects raw template output and accepts filled output", () => {
+  const config = testConfig();
   assert.equal(
-    isValidWeeklyOllamaOutput(weeklyTemplate, weeklyTemplate, "2026-03-20", {
+    isValidWeeklyOllamaOutput(config, weeklyTemplate, weeklyTemplate, "2026-03-20", {
       carryTasks: ["Follow up with infra"],
       outcomes: ["Shipped the rollout"]
     }),
@@ -139,6 +140,7 @@ test("weekly validator rejects raw template output and accepts filled output", (
   );
   assert.equal(
     isValidWeeklyOllamaOutput(
+      config,
       weeklyTemplate,
       weeklyTemplate.replaceAll("{{FRIDAY}}", "2026-03-20").replaceAll("{{TASKS_FROM_LAST_WEEK}}", "- None"),
       "2026-03-20",
@@ -148,6 +150,7 @@ test("weekly validator rejects raw template output and accepts filled output", (
   );
   assert.equal(
     isValidWeeklyOllamaOutput(
+      config,
       weeklyTemplate,
       weeklyTemplate
         .replaceAll("{{FRIDAY}}", "2026-03-20")
@@ -165,9 +168,14 @@ test("weekly validator rejects raw template output and accepts filled output", (
 });
 
 test("monthly validator rejects raw template output and accepts filled output", () => {
-  assert.equal(isValidMonthlyOllamaOutput(monthlyTemplate, monthlyTemplate, "2026-03", { hasWeeklyInputs: true }), false);
+  const config = testConfig();
+  assert.equal(
+    isValidMonthlyOllamaOutput(config, monthlyTemplate, monthlyTemplate, "2026-03", { hasWeeklyInputs: true }),
+    false
+  );
   assert.equal(
     isValidMonthlyOllamaOutput(
+      config,
       monthlyTemplate,
       monthlyTemplate
         .replaceAll("{{MONTH}}", "2026-03")
@@ -180,6 +188,7 @@ test("monthly validator rejects raw template output and accepts filled output", 
   );
   assert.equal(
     isValidMonthlyOllamaOutput(
+      config,
       monthlyTemplate,
       monthlyTemplate
         .replaceAll("{{MONTH}}", "2026-03")
@@ -196,6 +205,7 @@ test("monthly validator rejects raw template output and accepts filled output", 
 });
 
 test("weekly validator rejects sparse output when source outcomes exist", () => {
+  const config = testConfig();
   const sparseOutput = `---
 week_friday: 2026-03-20
 approved: false
@@ -221,11 +231,103 @@ Task list for Next Week (Max 3)
 `;
 
   assert.equal(
-    isValidWeeklyOllamaOutput(weeklyTemplate, sparseOutput, "2026-03-20", {
+    isValidWeeklyOllamaOutput(config, weeklyTemplate, sparseOutput, "2026-03-20", {
       carryTasks: ["Create Jira stories"],
       outcomes: ["Shipped the rollout"]
     }),
     false
+  );
+});
+
+test("weekly validator accepts configured section labels instead of hard-coded defaults", () => {
+  const config = testConfig();
+  config.weekly = {
+    sections: [
+      {
+        id: "tasks_last_week",
+        label: "Carry Forward Items",
+        type: "bullet_list",
+        placeholder: "{{TASKS_FROM_LAST_WEEK}}",
+        source: "carry_forward_tasks",
+        required: true
+      },
+      {
+        id: "key_outcomes",
+        label: "Delivered Work",
+        type: "bullet_list",
+        placeholder: "{{KEY_OUTCOMES}}",
+        source: "weekly_work_rollup",
+        required: true
+      },
+      {
+        id: "fires_prevented",
+        label: "Problems Solved",
+        type: "bullet_list",
+        placeholder: "{{FIRES_PREVENTED}}",
+        source: "notes_and_work",
+        required: true
+      },
+      {
+        id: "cross_team_impact",
+        label: "Cross-Team Impact",
+        type: "bullet_list",
+        placeholder: "{{CROSS_TEAM_IMPACT}}",
+        source: "meetings_and_notes",
+        required: true
+      },
+      {
+        id: "attendance_summary",
+        label: "Attendance Snapshot",
+        type: "kv_list",
+        placeholder: "{{ATTENDANCE_SUMMARY}}",
+        source: "attendance_rollup",
+        required: true
+      },
+      {
+        id: "next_week_tasks",
+        label: "Next Week Focus",
+        type: "bullet_list",
+        placeholder: "{{NEXT_WEEK_TASKS}}",
+        source: "upcoming_tasks",
+        required: true
+      }
+    ]
+  };
+
+  const generated = `---
+week_friday: 2026-03-20
+approved: false
+---
+
+# Week of: 2026-03-20
+
+Carry Forward Items:
+- Follow up with infra
+
+Work (Facts Only):
+Delivered Work:
+- Shipped the rollout
+
+Problems Solved:
+- Fixed logging
+
+Cross-Team Impact:
+- Partnered with another team
+
+Attendance Snapshot:
+- Office: 5
+- WFH: 0
+
+Next Week Focus
+- Follow up with infra
+`;
+
+  assert.equal(
+    isValidWeeklyOllamaOutput(config, weeklyTemplate, generated, "2026-03-20", {
+      carryTasks: ["Follow up with infra"],
+      outcomes: ["Shipped the rollout"]
+    }),
+    true
   );
 });
 
@@ -366,6 +468,81 @@ Task list for Next Week (Max 3)
     assert.match(output, /\*\*DevOps:\*\*/);
     assert.match(output, /- Fixed app startup logging visibility\./);
     assert.doesNotMatch(output, /- Generic summary from model/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("weekly draft overwrites the final managed section with deterministic content", async () => {
+  const cwd = await createWorkspace();
+  const config = testConfig();
+  await writeText(path.join(cwd, "templates", "weekly.md"), weeklyTemplate);
+  await writeText(
+    path.join(cwd, "daily", "2026", "2026-03-20.md"),
+    `---
+date: 2026-03-20
+attendance: office
+approved: false
+---
+
+## Meetings:
+- Sprint
+
+## Work:
+- Shipped the rollout
+
+## Notes:
+- Captured context
+
+## Task list for tomorrow:
+- [ ] Create Jira stories
+`
+  );
+
+  const generatedWeekly = `---
+week_friday: 2026-03-20
+approved: false
+---
+
+# Week of: 2026-03-20
+
+Task list from last Week:
+- Create Jira stories
+
+Work (Facts Only):
+Key outcomes shipped/delivered:
+- Placeholder from model
+
+Problems solved / fires prevented:
+- Captured context
+
+Cross-team impact:
+- Met with Sprint.
+
+Attendance Summary:
+- Office: 1
+- WFH: 0
+- Holiday: 0
+- Sick: 0
+- Vacation: 0
+
+Task list for Next Week (Max 3)
+- Hallucinated last section item
+`;
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(JSON.stringify({ response: generatedWeekly }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+
+  try {
+    const result = await generateWeeklyDraft(cwd, config, "2026-03-20", "2026-03-16");
+    const output = await readFile(result.outputPath, "utf8");
+
+    assert.match(output, /Task list for Next Week \(Max 3\)\n- Create Jira stories/);
+    assert.doesNotMatch(output, /Hallucinated last section item/);
   } finally {
     globalThis.fetch = originalFetch;
   }

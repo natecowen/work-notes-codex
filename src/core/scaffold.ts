@@ -2,13 +2,40 @@ import path from "node:path";
 import type { AppConfig } from "../types.js";
 import { iterateWorkdays } from "./dates.js";
 import { fileExists, readText, writeText } from "./files.js";
+import { findDailySection } from "./sections.js";
 
 function buildDailyPath(cwd: string, config: AppConfig, date: string): string {
   return path.resolve(cwd, config.paths.daily_notes_dir, date.slice(0, 4), `${date}.md`);
 }
 
-function renderDailyTemplate(template: string, date: string): string {
-  return template.replaceAll("{{DATE}}", date);
+function renderDailyTemplate(template: string, config: AppConfig, date: string): string {
+  const meetingsSection = findDailySection(config, "meetings");
+  const workSection = findDailySection(config, "work");
+  const notesSection = findDailySection(config, "notes");
+  const tasksTomorrowSection = findDailySection(config, "tasks_tomorrow");
+  const workCategories = workSection?.categories?.map((category) => `- ${category.label}:\n`).join("") ?? "";
+  let output = template
+    .replaceAll("{{DATE}}", date)
+    .replaceAll("{{MEETINGS_LABEL}}", meetingsSection?.label ?? "Meetings")
+    .replaceAll("{{WORK_LABEL}}", workSection?.label ?? "Work")
+    .replaceAll("{{WORK_CATEGORIES}}", workCategories.trimEnd())
+    .replaceAll("{{NOTES_LABEL}}", notesSection?.label ?? "Notes")
+    .replaceAll("{{TASKS_TOMORROW_LABEL}}", tasksTomorrowSection?.label ?? "Task list for tomorrow");
+
+  if (!output.includes("{{MEETINGS_LABEL}}")) {
+    output = output.replace(/^Meetings:\s*$/m, `${meetingsSection?.label ?? "Meetings"}:`);
+  }
+  if (!output.includes("{{WORK_LABEL}}")) {
+    output = output.replace(/^Work:\s*$/m, `${workSection?.label ?? "Work"}:`);
+  }
+  if (!output.includes("{{NOTES_LABEL}}")) {
+    output = output.replace(/^Notes:\s*$/m, `${notesSection?.label ?? "Notes"}:`);
+  }
+  if (!output.includes("{{TASKS_TOMORROW_LABEL}}")) {
+    output = output.replace(/^Task list for tomorrow:\s*$/m, `${tasksTomorrowSection?.label ?? "Task list for tomorrow"}:`);
+  }
+
+  return output;
 }
 
 export async function createDailyFile(
@@ -25,7 +52,7 @@ export async function createDailyFile(
     return { path: filePath, created: false };
   }
 
-  await writeText(filePath, renderDailyTemplate(template, date).trimEnd() + "\n");
+  await writeText(filePath, renderDailyTemplate(template, config, date).trimEnd() + "\n");
   return { path: filePath, created: true };
 }
 
