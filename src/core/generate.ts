@@ -6,6 +6,7 @@ import { loadDailyEntriesForWeek } from "./indexing.js";
 import { generateWithOllama } from "./llm.js";
 import type { AppConfig } from "../types.js";
 import { buildStyleProfile, loadSampleWritingExamples, loadStyleProfile, toStyleInstruction } from "./style.js";
+import type { DailyEntry, WorkCategoryGroup } from "../types.js";
 
 function renderAttendance(totals: ReturnType<typeof aggregateAttendance>): string {
   return [
@@ -91,17 +92,42 @@ function renderBullets(lines: string[], emptyLine = "-"): string {
   return lines.length > 0 ? lines.map((line) => `- ${line}`).join("\n") : emptyLine;
 }
 
+function collectWeeklyWorkCategories(entries: DailyEntry[]): WorkCategoryGroup[] {
+  const grouped = new Map<string, string[]>();
+
+  for (const entry of entries) {
+    for (const group of entry.workCategories) {
+      const existing = grouped.get(group.category) ?? [];
+      existing.push(...group.items);
+      grouped.set(group.category, existing);
+    }
+  }
+
+  return [...grouped.entries()].map(([category, items]) => ({
+    category,
+    items
+  }));
+}
+
+function renderWeeklyKeyOutcomes(groups: WorkCategoryGroup[]): string {
+  if (groups.length === 0) return "- None captured";
+
+  return groups
+    .map((group) => [`**${group.category}:**`, ...group.items.map((item) => `- ${item}`)].join("\n"))
+    .join("\n\n");
+}
+
 function renderWeeklyFallback(
   template: string,
   friday: string,
   carryTasks: string[],
-  outcomes: string[],
+  keyOutcomesMd: string,
   attendanceMd: string
 ): string {
   return template
     .replaceAll("{{FRIDAY}}", friday)
     .replaceAll("{{TASKS_FROM_LAST_WEEK}}", renderBullets(carryTasks, "- None"))
-    .replaceAll("{{KEY_OUTCOMES}}", renderBullets(outcomes, "- None captured"))
+    .replaceAll("{{KEY_OUTCOMES}}", keyOutcomesMd)
     .replaceAll("{{FIRES_PREVENTED}}", "-")
     .replaceAll("{{CROSS_TEAM_IMPACT}}", "-")
     .replaceAll("{{ATTENDANCE_SUMMARY}}", attendanceMd)
@@ -126,7 +152,47 @@ function normalizeTemplate(content: string): string {
   return content.trim().replace(/\r\n/g, "\n");
 }
 
-export function isValidWeeklyOllamaOutput(template: string, generated: string, fridayIso: string): boolean {
+function normalizeHeading(line: string): string {
+  return line.trim().replace(/^#+\s*/, "");
+}
+
+function extractSectionContent(content: string, startHeading: string, endHeadings: string[]): string {
+  const lines = normalizeTemplate(content).split("\n");
+  const startIndex = lines.findIndex((line) => normalizeHeading(line) === startHeading);
+  if (startIndex < 0) return "";
+
+  const endIndex = lines.findIndex(
+    (line, index) => index > startIndex && endHeadings.includes(normalizeHeading(line))
+  );
+
+  return lines.slice(startIndex + 1, endIndex < 0 ? undefined : endIndex).join("\n").trim();
+}
+
+function hasSubstantiveSectionContent(content: string): boolean {
+  return content
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .some((line) => /[A-Za-z0-9]/.test(line.replace(/^[-*]\s*/, "")));
+}
+
+function replaceSectionContent(content: string, startHeading: string, endHeadings: string[], replacement: string): string {
+  const lines = normalizeTemplate(content).split("\n");
+  const startIndex = lines.findIndex((line) => normalizeHeading(line) === startHeading);
+  if (startIndex < 0) return content;
+
+  const endIndex = lines.findIndex((line, index) => index > startIndex && endHeadings.includes(normalizeHeading(line)));
+  if (endIndex < 0) return content;
+
+  return [...lines.slice(0, startIndex + 1), ...replacement.split("\n"), ...lines.slice(endIndex)].join("\n");
+}
+
+export function isValidWeeklyOllamaOutput(
+  template: string,
+  generated: string,
+  fridayIso: string,
+  expected: { carryTasks: string[]; outcomes: string[] }
+): boolean {
   const normalizedGenerated = normalizeTemplate(generated);
   if (!normalizedGenerated) return false;
   if (normalizedGenerated === normalizeTemplate(template)) return false;
@@ -134,10 +200,31 @@ export function isValidWeeklyOllamaOutput(template: string, generated: string, f
   if (!normalizedGenerated.includes("Task list from last Week:")) return false;
   if (!normalizedGenerated.includes("Attendance Summary:")) return false;
   if (!normalizedGenerated.includes(fridayIso)) return false;
+  if (
+    expected.carryTasks.length > 0 &&
+    !hasSubstantiveSectionContent(
+      extractSectionContent(normalizedGenerated, "Task list from last Week:", ["Work (Facts Only):"])
+    )
+  ) {
+    return false;
+  }
+  if (
+    expected.outcomes.length > 0 &&
+    !hasSubstantiveSectionContent(
+      extractSectionContent(normalizedGenerated, "Key outcomes shipped/delivered:", ["Problems solved / fires prevented:"])
+    )
+  ) {
+    return false;
+  }
   return true;
 }
 
-export function isValidMonthlyOllamaOutput(template: string, generated: string, month: string): boolean {
+export function isValidMonthlyOllamaOutput(
+  template: string,
+  generated: string,
+  month: string,
+  expected: { hasWeeklyInputs: boolean }
+): boolean {
   const normalizedGenerated = normalizeTemplate(generated);
   if (!normalizedGenerated) return false;
   if (normalizedGenerated === normalizeTemplate(template)) return false;
@@ -145,6 +232,14 @@ export function isValidMonthlyOllamaOutput(template: string, generated: string, 
   if (!normalizedGenerated.includes("Top Outcomes")) return false;
   if (!normalizedGenerated.includes("Cross-Team Impact")) return false;
   if (!normalizedGenerated.includes(month)) return false;
+  if (
+    expected.hasWeeklyInputs &&
+    !hasSubstantiveSectionContent(
+      extractSectionContent(normalizedGenerated, "1. Top Outcomes:", ["2. Problems Solved / Fires Prevented"])
+    )
+  ) {
+    return false;
+  }
   return true;
 }
 
@@ -185,6 +280,8 @@ export async function generateWeeklyDraft(
 
   const allOpenTasks = entries.flatMap((e) => e.tasksOpen);
   const outcomes = entries.flatMap((e) => e.workLines.map((line) => line.replace(/^\-\s*/, "").trim())).filter(Boolean);
+  const weeklyWorkCategories = collectWeeklyWorkCategories(entries);
+  const keyOutcomesMd = renderWeeklyKeyOutcomes(weeklyWorkCategories);
   const meetings = [...new Set(entries.flatMap((e) => e.meetings))];
   const attendance = aggregateAttendance(entries);
   const attendanceMd = renderAttendance(attendance);
@@ -197,7 +294,8 @@ export async function generateWeeklyDraft(
     "",
     `Friday date: ${fridayIso}`,
     `Open tasks:\n${allOpenTasks.map((t) => `- ${t}`).join("\n") || "- None"}`,
-    `Work lines:\n${outcomes.join("\n") || "- None"}`,
+    `Work lines by category:\n${keyOutcomesMd}`,
+    `Flattened work lines:\n${outcomes.join("\n") || "- None"}`,
     `Meetings:\n${meetings.map((m) => `- ${m}`).join("\n") || "- None"}`,
     `Attendance:\n${attendanceMd}`,
     "",
@@ -206,15 +304,20 @@ export async function generateWeeklyDraft(
     renderRememberBlock(config, "Generate the weekly summary now as markdown.")
   ].join("\n");
 
-  let content = renderWeeklyFallback(template, fridayIso, allOpenTasks, outcomes, attendanceMd);
+  let content = renderWeeklyFallback(template, fridayIso, allOpenTasks, keyOutcomesMd, attendanceMd);
   try {
     const generated = await generateWithOllama(
       config,
       "You are a strict formatter. Output only valid markdown using the provided template format.",
       prompt
     );
-    if (isValidWeeklyOllamaOutput(template, generated, fridayIso)) {
-      content = generated;
+    if (isValidWeeklyOllamaOutput(template, generated, fridayIso, { carryTasks: allOpenTasks, outcomes })) {
+      content = replaceSectionContent(
+        generated,
+        "Key outcomes shipped/delivered:",
+        ["Problems solved / fires prevented:"],
+        keyOutcomesMd
+      );
     } else {
       warnings.push("Ollama output did not match expected format; used deterministic fallback.");
     }
@@ -331,7 +434,7 @@ export async function generateMonthlyDraft(
       "You are a strict formatter. Output only valid markdown using the provided template format.",
       prompt
     );
-    if (isValidMonthlyOllamaOutput(template, generated, month)) {
+    if (isValidMonthlyOllamaOutput(template, generated, month, { hasWeeklyInputs: weeklyInputs.length > 0 })) {
       content = generated;
     } else {
       warnings.push("Ollama output did not match expected monthly format; used fallback template.");

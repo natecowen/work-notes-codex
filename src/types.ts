@@ -1,5 +1,10 @@
 export type Attendance = "office" | "wfh" | "holiday" | "sick" | "vacation";
 
+export interface WorkCategoryGroup {
+  category: string;
+  items: string[];
+}
+
 export interface AppConfig {
   version: number;
   paths: {
@@ -50,6 +55,7 @@ export interface DailyEntry {
   attendance: Attendance;
   meetings: string[];
   workLines: string[];
+  workCategories: WorkCategoryGroup[];
   notesLines: string[];
   tasksOpen: string[];
   tasksDone: string[];

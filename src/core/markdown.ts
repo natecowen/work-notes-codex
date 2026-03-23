@@ -1,5 +1,5 @@
 import matter from "gray-matter";
-import type { AppConfig, Attendance, DailyEntry } from "../types.js";
+import type { AppConfig, Attendance, DailyEntry, WorkCategoryGroup } from "../types.js";
 
 function normalizeLine(line: string): string {
   return line.trim().replace(/^\-\s*/, "").trim();
@@ -23,14 +23,34 @@ function parseTasks(lines: string[], config: AppConfig): { open: string[]; done:
   return { open, done };
 }
 
+function parseMarkdownHeading(line: string): { depth: number; label: string } | null {
+  const match = line.match(/^\s*(#{1,6})\s+(.+?)\s*$/);
+  if (!match) return null;
+  return {
+    depth: match[1].length,
+    label: match[2].trim()
+  };
+}
+
 function extractSection(body: string, header: string): string[] {
   const lines = body.split(/\r?\n/);
-  const startIdx = lines.findIndex((line) => line.trim().toLowerCase() === `${header.toLowerCase()}:`);
+  const target = `${header.toLowerCase()}:`;
+  const startIdx = lines.findIndex((line) => {
+    const heading = parseMarkdownHeading(line);
+    if (heading) return heading.label.toLowerCase() === target;
+    return line.trim().toLowerCase() === target;
+  });
   if (startIdx < 0) return [];
+
+  const startHeading = parseMarkdownHeading(lines[startIdx]);
   const sectionLines: string[] = [];
   for (let i = startIdx + 1; i < lines.length; i += 1) {
     const line = lines[i];
-    if (/^[A-Za-z][A-Za-z\s/()-]+:$/.test(line.trim())) {
+    const heading = parseMarkdownHeading(line);
+    if (heading && startHeading && heading.depth <= startHeading.depth) {
+      break;
+    }
+    if (!startHeading && /^[A-Za-z][A-Za-z\s/()-]+:\s*$/.test(line.trim())) {
       break;
     }
     sectionLines.push(line);
@@ -49,10 +69,48 @@ function isCategoryHeadingLine(line: string): boolean {
 
 function normalizeWorkLines(lines: string[]): string[] {
   return lines
-    .map((line) => line.trim())
+    .map((line) => normalizeLine(line))
     .filter(Boolean)
     .filter((line) => line !== "-")
     .filter((line) => !isCategoryHeadingLine(line));
+}
+
+function parseWorkSection(lines: string[]): { workLines: string[]; workCategories: WorkCategoryGroup[] } {
+  const workLines: string[] = [];
+  const workCategories: WorkCategoryGroup[] = [];
+  let currentCategory: WorkCategoryGroup | null = null;
+
+  const ensureCategory = (category: string): WorkCategoryGroup => {
+    const existing = workCategories.find((group) => group.category === category);
+    if (existing) return existing;
+    const group = { category, items: [] };
+    workCategories.push(group);
+    return group;
+  };
+
+  for (const line of lines) {
+    const markdownHeading = parseMarkdownHeading(line);
+    const headingLabel = markdownHeading?.label ?? line.trim();
+    const categoryMatch = headingLabel.match(/^([A-Za-z][A-Za-z\s/&()-]+):\s*$/);
+    if (categoryMatch) {
+      currentCategory = ensureCategory(categoryMatch[1]);
+      continue;
+    }
+
+    const normalized = normalizeLine(line);
+    if (!normalized || normalized === "-") continue;
+    workLines.push(normalized);
+
+    if (!currentCategory) {
+      currentCategory = ensureCategory("General");
+    }
+    currentCategory.items.push(normalized);
+  }
+
+  return {
+    workLines: normalizeWorkLines(workLines),
+    workCategories: workCategories.filter((group) => group.items.length > 0)
+  };
 }
 
 export function parseDailyMarkdown(filePath: string, raw: string, config: AppConfig): DailyEntry {
@@ -79,7 +137,7 @@ export function parseDailyMarkdown(filePath: string, raw: string, config: AppCon
   }
 
   const meetingsLines = extractSection(parsed.content, "Meetings").map(normalizeLine).filter(Boolean);
-  const workLines = normalizeWorkLines(extractSection(parsed.content, "Work"));
+  const { workLines, workCategories } = parseWorkSection(extractSection(parsed.content, "Work"));
   const notesLines = extractSection(parsed.content, "Notes").map((l) => l.trim()).filter(Boolean);
 
   const allBodyLines = parsed.content.split(/\r?\n/);
@@ -91,6 +149,7 @@ export function parseDailyMarkdown(filePath: string, raw: string, config: AppCon
     attendance: data.attendance,
     meetings: meetingsLines,
     workLines,
+    workCategories,
     notesLines,
     tasksOpen: tasks.open,
     tasksDone: tasks.done,
