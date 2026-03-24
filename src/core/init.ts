@@ -160,15 +160,17 @@ approved: false
 
 # Day: {{DATE}}
 
-{{MEETINGS_LABEL}}:
-- 
+{{SECTION id="meetings" label=true heading_level=2}}:
+{{SECTION id="meetings"}}
 
-{{WORK_LABEL}}:
-{{WORK_CATEGORIES}}
+{{SECTION id="work" label=true heading_level=2}}:
+{{SECTION id="work" nested=true category_level=3}}
 
-{{NOTES_LABEL}}:
-{{TASKS_TOMORROW_LABEL}}:
-- [ ] 
+{{SECTION id="notes" label=true heading_level=2}}
+{{SECTION id="notes"}}
+
+{{SECTION id="tasks_tomorrow" label=true heading_level=2}}:
+{{SECTION id="tasks_tomorrow"}}
 `;
 
 const weeklyTemplate = `---

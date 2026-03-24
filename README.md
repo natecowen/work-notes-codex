@@ -182,9 +182,50 @@ Use `templates/*.md` when you want to change output shape:
 
 Current template placeholders:
 
-- `templates/daily.md`: `{{DATE}}`
+- `templates/daily.md`: `{{DATE}}` and `{{SECTION ...}}`
 - `templates/weekly.md`: `{{FRIDAY}}`, `{{TASKS_FROM_LAST_WEEK}}`, `{{KEY_OUTCOMES}}`, `{{FIRES_PREVENTED}}`, `{{CROSS_TEAM_IMPACT}}`, `{{ATTENDANCE_SUMMARY}}`, `{{NEXT_WEEK_TASKS}}`
 - `templates/monthly.md`: `{{MONTH}}`, `{{TOP_OUTCOMES}}`, `{{FIRES}}`, `{{IMPACT}}`, `{{RISKS}}`, `{{NEXT_FOCUS}}`
+
+Daily template `SECTION` directives:
+
+- `{{SECTION id="meetings" label=true heading_level=2}}` renders the configured section label as a Markdown heading.
+- `{{SECTION id="meetings"}}` renders default starter content for that section.
+- `{{SECTION id="work" nested=true category_level=3}}` renders starter content for each configured work category as nested headings plus bullet placeholders.
+- Supported `id` values come from `daily.sections[*].id` in `config/config.yaml`.
+- `heading_level` controls the Markdown heading level for label directives.
+- `category_level` controls the Markdown heading level for nested work categories.
+- `nested=true` is currently meaningful for the `work` section and tells the renderer to expand configured categories.
+
+Example daily template:
+
+```md
+---
+date: {{DATE}}
+attendance: office
+tags: []
+approved: false
+---
+
+# Day: {{DATE}}
+
+{{SECTION id="meetings" label=true heading_level=2}}:
+{{SECTION id="meetings"}}
+
+{{SECTION id="work" label=true heading_level=2}}:
+{{SECTION id="work" nested=true category_level=3}}
+
+{{SECTION id="notes" label=true heading_level=2}}
+{{SECTION id="notes"}}
+
+{{SECTION id="tasks_tomorrow" label=true heading_level=2}}:
+{{SECTION id="tasks_tomorrow"}}
+```
+
+The intended split is:
+
+- `config/config.yaml` defines which daily sections and categories exist, plus their labels.
+- `templates/daily.md` defines Markdown structure such as heading levels and spacing.
+- The scaffold renderer combines both when `worklog generate daily` or `worklog generate dailies` creates files.
 
 Customization examples:
 
