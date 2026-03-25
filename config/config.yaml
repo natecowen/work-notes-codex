@@ -93,13 +93,13 @@ weekly:
       label: Problems solved / fires prevented
       type: bullet_list
       placeholder: "{{FIRES_PREVENTED}}"
-      source: notes_and_work
+      source: fire_highlights
       required: true
     - id: cross_team_impact
       label: Cross-team impact
       type: bullet_list
       placeholder: "{{CROSS_TEAM_IMPACT}}"
-      source: meetings_and_notes
+      source: collaboration_highlights
       required: true
     - id: attendance_summary
       label: Attendance Summary

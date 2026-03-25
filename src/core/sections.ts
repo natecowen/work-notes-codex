@@ -44,7 +44,7 @@ export const DEFAULT_WEEKLY_SECTIONS: OutputSectionDefinition[] = [
     label: "Problems solved / fires prevented",
     type: "bullet_list",
     placeholder: "{{FIRES_PREVENTED}}",
-    source: "notes_and_work",
+    source: "fire_highlights",
     required: true
   },
   {
@@ -52,7 +52,7 @@ export const DEFAULT_WEEKLY_SECTIONS: OutputSectionDefinition[] = [
     label: "Cross-team impact",
     type: "bullet_list",
     placeholder: "{{CROSS_TEAM_IMPACT}}",
-    source: "meetings_and_notes",
+    source: "collaboration_highlights",
     required: true
   },
   {

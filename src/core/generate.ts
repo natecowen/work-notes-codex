@@ -277,30 +277,122 @@ function uniqueNonEmpty(lines: string[]): string[] {
   return [...new Set(lines.map((line) => line.trim()).filter(Boolean))];
 }
 
+function stripListMarker(line: string): string {
+  return line.trim().replace(/^[-*]\s*/, "").trim();
+}
+
+function normalizeSentence(line: string): string {
+  return line.trim().replace(/[.]+$/g, "").trim();
+}
+
+function normalizeLinePunctuation(line: string): string {
+  const trimmed = line.trim();
+  if (!trimmed) return "";
+  return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
+}
+
+function extractBulletItems(content: string): string[] {
+  return content
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("-") || line.startsWith("*"))
+    .map(stripListMarker)
+    .filter(Boolean);
+}
+
 function normalizeCollectedMonthlyLines(lines: string[]): string[] {
   return uniqueNonEmpty(
     lines
       .map((line) => line.trim())
       .filter(Boolean)
       .filter((line) => !line.startsWith("**"))
-      .map((line) => line.replace(/^[-*]\s*/, "").trim())
+      .map(stripListMarker)
       .filter(Boolean)
   );
 }
 
-function inferWeeklyFireLines(entries: DailyEntry[]): string[] {
-  const candidates = entries.flatMap((entry) => [...entry.notesLines, ...entry.workLines]);
-  const signal = /(fixed|resolved|prevent|restored|unblocked|troubleshoot|cleanup|cleaned|validated|stabilized)/i;
-  const matched = uniqueNonEmpty(candidates.filter((line) => signal.test(line)));
-  return matched.length > 0 ? matched : uniqueNonEmpty(entries.flatMap((entry) => entry.notesLines)).slice(0, 5);
+interface WeeklyDerivedContent {
+  carryInTasks: string[];
+  nextWeekTasks: string[];
+  outcomes: string[];
+  weeklyWorkCategories: WorkCategoryGroup[];
+  meetings: string[];
+  notes: string[];
+  fireLines: string[];
+  fireExcludedLines: string[];
+  impactLines: string[];
+}
+
+function getNonPersonalWorkLines(entry: DailyEntry): string[] {
+  const explicit = entry.workCategories
+    .filter((group) => normalizeHeadingLabel(group.category) !== normalizeHeadingLabel("Personal"))
+    .flatMap((group) => group.items);
+  return uniqueNonEmpty(explicit.length > 0 ? explicit : entry.workLines);
+}
+
+function normalizedNotes(entry: DailyEntry): string[] {
+  return uniqueNonEmpty(entry.notesLines.map(stripListMarker).filter(Boolean));
+}
+
+function inferWeeklyFireLines(entries: DailyEntry[]): { included: string[]; excluded: string[] } {
+  const remediationSignal =
+    /\b(fixed|resolved|prevent(?:ed)?|restored|unblocked|troubleshoot(?:ed|ing)?|mitigated|validated|stabilized|incident|failure|outage|alert|issue|bug|rollback|degraded|bottleneck|secret|config|logging)\b/i;
+  const weakAdminSignal = /\b(cleaned up|cleaned|reviewed my notes|shell aliases|document(?:ed|ing)|captured follow-up|reference)\b/i;
+  const candidates = entries.flatMap((entry) => [...normalizedNotes(entry), ...getNonPersonalWorkLines(entry)]);
+  const included = uniqueNonEmpty(
+    candidates.filter((line) => remediationSignal.test(line) && !weakAdminSignal.test(line))
+  );
+  const excluded = uniqueNonEmpty(
+    entries.flatMap((entry) => {
+      const personalLines = entry.workCategories
+        .filter((group) => normalizeHeadingLabel(group.category) === normalizeHeadingLabel("Personal"))
+        .flatMap((group) => group.items);
+      const weakLines = [...normalizedNotes(entry), ...entry.workLines].filter((line) => weakAdminSignal.test(line));
+      return [...personalLines, ...weakLines];
+    })
+  );
+  const fallbackNotes = uniqueNonEmpty(
+    entries
+      .flatMap((entry) => normalizedNotes(entry))
+      .filter((line) => remediationSignal.test(line) && !weakAdminSignal.test(line))
+  ).slice(0, 5);
+
+  return {
+    included: included.length > 0 ? included : fallbackNotes,
+    excluded
+  };
 }
 
 function inferWeeklyImpactLines(entries: DailyEntry[]): string[] {
-  const meetingLines = entries.flatMap((entry) => entry.meetings.map((meeting) => `Met with ${meeting}.`));
-  const noteLines = entries.flatMap((entry) => entry.notesLines);
-  const signal = /(team|with|helped|assisted|supported|partner|stakeholder|met)/i;
+  const meetingLines = uniqueNonEmpty(entries.flatMap((entry) => entry.meetings.map(normalizeLinePunctuation)));
+  const noteLines = uniqueNonEmpty(entries.flatMap((entry) => normalizedNotes(entry).map(normalizeLinePunctuation)));
+  const signal = /\b(team|helped|assisted|supported|partner(?:ed)?|stakeholder|mentor(?:ed|ing)?|coordinated|briefed|with)\b/i;
   const matched = uniqueNonEmpty([...meetingLines, ...noteLines].filter((line) => signal.test(line)));
-  return matched.length > 0 ? matched : uniqueNonEmpty(meetingLines).slice(0, 5);
+  return matched.length > 0 ? matched : meetingLines.slice(0, 5);
+}
+
+function deriveWeeklyContent(entries: DailyEntry[]): WeeklyDerivedContent {
+  const outcomes = entries.flatMap((entry) => entry.workLines.map(stripListMarker)).filter(Boolean);
+  const weeklyWorkCategories = collectWeeklyWorkCategories(entries);
+  const meetings = uniqueNonEmpty(entries.flatMap((entry) => entry.meetings));
+  const notes = uniqueNonEmpty(entries.flatMap((entry) => normalizedNotes(entry)));
+  const firstEntry = entries[0];
+  const lastEntry = entries[entries.length - 1];
+  const carryInTasks = uniqueNonEmpty(firstEntry?.tasksOpen ?? []);
+  const nextWeekTasks = uniqueNonEmpty(lastEntry?.tasksOpen ?? []).slice(0, 3);
+  const fireAnalysis = inferWeeklyFireLines(entries);
+
+  return {
+    carryInTasks,
+    nextWeekTasks,
+    outcomes,
+    weeklyWorkCategories,
+    meetings,
+    notes,
+    fireLines: fireAnalysis.included,
+    fireExcludedLines: fireAnalysis.excluded,
+    impactLines: inferWeeklyImpactLines(entries)
+  };
 }
 
 function summarizeMonthlySections(config: AppConfig, weeklyInputs: Array<{ path: string; content: string }>): Record<string, string> {
@@ -332,7 +424,7 @@ export function isValidWeeklyOllamaOutput(
   template: string,
   generated: string,
   fridayIso: string,
-  expected: { carryTasks: string[]; outcomes: string[] }
+  expected: WeeklyDerivedContent
 ): boolean {
   const normalizedGenerated = normalizeTemplate(generated);
   const labels = getWeeklyStructure(config).sections.map((section) => section.label);
@@ -346,17 +438,55 @@ export function isValidWeeklyOllamaOutput(
     }
   }
   if (
-    expected.carryTasks.length > 0 &&
+    expected.carryInTasks.length > 0 &&
     !hasSubstantiveSectionContent(extractManagedSection(normalizedGenerated, labels, findPeriodSection(config, "weekly", "tasks_last_week")!.label))
   ) {
     return false;
   }
   if (
     expected.outcomes.length > 0 &&
-    !hasSubstantiveSectionContent(extractManagedSection(normalizedGenerated, labels, findPeriodSection(config, "weekly", "key_outcomes")!.label))
+      !hasSubstantiveSectionContent(extractManagedSection(normalizedGenerated, labels, findPeriodSection(config, "weekly", "key_outcomes")!.label))
   ) {
     return false;
   }
+  const tasksLastWeek = extractBulletItems(
+    extractManagedSection(normalizedGenerated, labels, findPeriodSection(config, "weekly", "tasks_last_week")!.label)
+  );
+  const nextWeekTasks = extractBulletItems(
+    extractManagedSection(normalizedGenerated, labels, findPeriodSection(config, "weekly", "next_week_tasks")!.label)
+  );
+  const fires = extractBulletItems(
+    extractManagedSection(normalizedGenerated, labels, findPeriodSection(config, "weekly", "fires_prevented")!.label)
+  );
+  const impact = extractBulletItems(
+    extractManagedSection(normalizedGenerated, labels, findPeriodSection(config, "weekly", "cross_team_impact")!.label)
+  );
+
+  if (
+    expected.carryInTasks.length > 0 &&
+    tasksLastWeek.length > 0 &&
+    tasksLastWeek.every((line) => expected.nextWeekTasks.includes(line)) &&
+    !expected.carryInTasks.every((line) => expected.nextWeekTasks.includes(line))
+  ) {
+    return false;
+  }
+
+  const sourceMeetings = new Set(expected.meetings.map(normalizeSentence));
+  if (
+    impact.some((line) => {
+      const normalized = normalizeSentence(line);
+      if (!normalized.startsWith("Met with ")) return false;
+      const rewritten = normalized.replace(/^Met with\s+/i, "").trim();
+      return sourceMeetings.has(normalizeSentence(rewritten));
+    })
+  ) {
+    return false;
+  }
+
+  if (fires.some((line) => expected.fireExcludedLines.some((excluded) => normalizeSentence(excluded) === normalizeSentence(line)))) {
+    return false;
+  }
+
   return true;
 }
 
@@ -422,16 +552,14 @@ export async function generateWeeklyDraft(
   const { entries, missingDates } = await loadDailyEntriesForWeek(cwd, config, mondayIso);
   if (missingDates.length > 0) warnings.push(`Missing daily files: ${missingDates.join(", ")}`);
 
-  const allOpenTasks = entries.flatMap((e) => e.tasksOpen);
-  const outcomes = entries.flatMap((e) => e.workLines.map((line) => line.replace(/^\-\s*/, "").trim())).filter(Boolean);
-  const weeklyWorkCategories = collectWeeklyWorkCategories(entries);
-  const keyOutcomesMd = renderWeeklyKeyOutcomes(config, weeklyWorkCategories);
-  const meetings = [...new Set(entries.flatMap((e) => e.meetings))];
+  const weeklyContent = deriveWeeklyContent(entries);
+  const keyOutcomesMd = renderWeeklyKeyOutcomes(config, weeklyContent.weeklyWorkCategories);
   const attendance = aggregateAttendance(entries);
   const attendanceMd = renderAttendance(attendance);
-  const firesMd = renderBullets(inferWeeklyFireLines(entries), "- None captured");
-  const impactMd = renderBullets(inferWeeklyImpactLines(entries), "- None captured");
-  const nextWeekMd = renderBullets(allOpenTasks.slice(0, 3), "- None captured");
+  const firesMd = renderBullets(weeklyContent.fireLines, "- None captured");
+  const impactMd = renderBullets(weeklyContent.impactLines, "- None captured");
+  const carryInMd = renderBullets(weeklyContent.carryInTasks, "- None captured");
+  const nextWeekMd = renderBullets(weeklyContent.nextWeekTasks, "- None captured");
   const weeklySections = getWeeklyStructure(config).sections;
 
   const templatePath = path.resolve(cwd, config.paths.templates_dir, "weekly.md");
@@ -441,21 +569,30 @@ export async function generateWeeklyDraft(
     styleInstruction,
     "",
     `Friday date: ${fridayIso}`,
-    `Open tasks:\n${allOpenTasks.map((t) => `- ${t}`).join("\n") || "- None"}`,
+    `Carry-forward tasks entering the week:\n${weeklyContent.carryInTasks.map((t) => `- ${t}`).join("\n") || "- None"}`,
+    `Open tasks remaining at the end of the week:\n${weeklyContent.nextWeekTasks.map((t) => `- ${t}`).join("\n") || "- None"}`,
     `Work lines by category:\n${keyOutcomesMd}`,
-    `Flattened work lines:\n${outcomes.join("\n") || "- None"}`,
-    `Meetings:\n${meetings.map((m) => `- ${m}`).join("\n") || "- None"}`,
-    `Notes:\n${entries.flatMap((entry) => entry.notesLines).map((line) => `- ${line}`).join("\n") || "- None"}`,
+    `Flattened work lines:\n${weeklyContent.outcomes.join("\n") || "- None"}`,
+    `Meetings:\n${weeklyContent.meetings.map((m) => `- ${m}`).join("\n") || "- None"}`,
+    `Notes:\n${weeklyContent.notes.map((line) => `- ${line}`).join("\n") || "- None"}`,
+    `Problems solved / fires prevented source lines:\n${weeklyContent.fireLines.map((line) => `- ${line}`).join("\n") || "- None"}`,
+    `Cross-team impact source lines:\n${weeklyContent.impactLines.map((line) => `- ${line}`).join("\n") || "- None"}`,
     `Attendance:\n${attendanceMd}`,
     `Managed weekly sections:\n${weeklySections.map((section) => `- ${section.id}: ${section.label}`).join("\n")}`,
     "",
     `Template:\n${template}`,
     "",
+    "Weekly section rules:",
+    "- `Task list from last Week` contains carry-forward items already open when the week started.",
+    "- `Problems solved / fires prevented` contains concrete fixes, remediations, incidents, or blockers addressed this week.",
+    "- `Cross-team impact` preserves meeting and collaboration wording from the source notes; do not rewrite bullets into `Met with ...` phrases.",
+    "- `Task list for Next Week` contains forward-looking open tasks that remain at the end of the week.",
+    "",
     renderRememberBlock(config, "Generate the weekly summary now as markdown.")
   ].join("\n");
 
   const weeklySectionValues = {
-    tasks_last_week: renderBullets(allOpenTasks, "- None"),
+    tasks_last_week: carryInMd,
     key_outcomes: keyOutcomesMd,
     fires_prevented: firesMd,
     cross_team_impact: impactMd,
@@ -471,7 +608,7 @@ export async function generateWeeklyDraft(
       "You are a strict formatter. Output only valid markdown using the provided template format.",
       prompt
     );
-    if (isValidWeeklyOllamaOutput(config, template, generated, fridayIso, { carryTasks: allOpenTasks, outcomes })) {
+    if (isValidWeeklyOllamaOutput(config, template, generated, fridayIso, weeklyContent)) {
       content = applyManagedSectionsFromScaffold(generated, renderedWeeklyScaffold, weeklySections);
     } else {
       warnings.push("Ollama output did not match expected format; used deterministic fallback.");
@@ -496,6 +633,7 @@ export async function exportWeeklyPrompt(
   const { entries, missingDates } = await loadDailyEntriesForWeek(cwd, config, mondayIso);
   if (missingDates.length > 0) warnings.push(`Missing daily files: ${missingDates.join(", ")}`);
 
+  const weeklyContent = deriveWeeklyContent(entries);
   const attendance = aggregateAttendance(entries);
   const attendanceMd = renderAttendance(attendance);
   const templatePath = path.resolve(cwd, config.paths.templates_dir, "weekly.md");
@@ -528,6 +666,10 @@ export async function exportWeeklyPrompt(
     "Use the daily notes below as the source of truth.",
     "Use the sample writing only for tone and phrasing, not as factual source material.",
     "Do not invent meetings, outcomes, risks, or blockers.",
+    "Use `Task list from last Week` only for carry-forward items already open when the week began.",
+    "Use `Task list for Next Week` only for forward-looking tasks still open at the end of the week.",
+    "Keep `Cross-team impact` close to the source meeting and collaboration wording; do not rewrite bullets into `Met with ...` phrases.",
+    "Keep `Problems solved / fires prevented` limited to concrete fixes, remediations, incidents, and blockers addressed this week.",
     `Managed weekly sections: ${getWeeklyStructure(config).sections.map((section) => `${section.id}=${section.label}`).join("; ")}`,
     "",
     renderRememberBlock(config, "Generate the weekly summary now in a downloadable .md file."),
@@ -535,6 +677,15 @@ export async function exportWeeklyPrompt(
     "## Target Week",
     `Friday date: ${fridayIso}`,
     `Monday date: ${mondayIso}`,
+    "",
+    "## Derived Weekly Inputs",
+    `Carry-forward tasks entering the week:\n${weeklyContent.carryInTasks.map((task) => `- ${task}`).join("\n") || "- None"}`,
+    "",
+    `Open tasks remaining at the end of the week:\n${weeklyContent.nextWeekTasks.map((task) => `- ${task}`).join("\n") || "- None"}`,
+    "",
+    `Problems solved / fires prevented source lines:\n${weeklyContent.fireLines.map((line) => `- ${line}`).join("\n") || "- None"}`,
+    "",
+    `Cross-team impact source lines:\n${weeklyContent.impactLines.map((line) => `- ${line}`).join("\n") || "- None"}`,
     "",
     "## Attendance Summary",
     attendanceMd,

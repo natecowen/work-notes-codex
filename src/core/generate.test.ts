@@ -151,13 +151,42 @@ Notes:
   );
 }
 
+function expectedWeeklyContent(
+  overrides: Partial<{
+    carryInTasks: string[];
+    nextWeekTasks: string[];
+    outcomes: string[];
+    meetings: string[];
+    notes: string[];
+    fireLines: string[];
+    fireExcludedLines: string[];
+    impactLines: string[];
+  }> = {}
+) {
+  return {
+    carryInTasks: [],
+    nextWeekTasks: [],
+    outcomes: [],
+    weeklyWorkCategories: [],
+    meetings: [],
+    notes: [],
+    fireLines: [],
+    fireExcludedLines: [],
+    impactLines: [],
+    ...overrides
+  };
+}
+
 test("weekly validator rejects raw template output and accepts filled output", () => {
   const config = testConfig();
   assert.equal(
-    isValidWeeklyOllamaOutput(config, weeklyTemplate, weeklyTemplate, "2026-03-20", {
-      carryTasks: ["Follow up with infra"],
-      outcomes: ["Shipped the rollout"]
-    }),
+    isValidWeeklyOllamaOutput(
+      config,
+      weeklyTemplate,
+      weeklyTemplate,
+      "2026-03-20",
+      expectedWeeklyContent({ carryInTasks: ["Follow up with infra"], outcomes: ["Shipped the rollout"] })
+    ),
     false
   );
   assert.equal(
@@ -166,7 +195,7 @@ test("weekly validator rejects raw template output and accepts filled output", (
       weeklyTemplate,
       weeklyTemplate.replaceAll("{{FRIDAY}}", "2026-03-20").replaceAll("{{TASKS_FROM_LAST_WEEK}}", "- None"),
       "2026-03-20",
-      { carryTasks: ["Follow up with infra"], outcomes: ["Shipped the rollout"] }
+      expectedWeeklyContent({ carryInTasks: ["Follow up with infra"], outcomes: ["Shipped the rollout"] })
     ),
     false
   );
@@ -183,7 +212,11 @@ test("weekly validator rejects raw template output and accepts filled output", (
         .replaceAll("{{ATTENDANCE_SUMMARY}}", "- Office: 5")
         .replaceAll("{{NEXT_WEEK_TASKS}}", "- Follow up with infra"),
       "2026-03-20",
-      { carryTasks: ["Follow up with infra"], outcomes: ["Shipped the rollout"] }
+      expectedWeeklyContent({
+        carryInTasks: ["Follow up with infra"],
+        nextWeekTasks: ["Follow up with infra"],
+        outcomes: ["Shipped the rollout"]
+      })
     ),
     true
   );
@@ -254,7 +287,9 @@ Task list for Next Week (Max 3)
 
   assert.equal(
     isValidWeeklyOllamaOutput(config, weeklyTemplate, sparseOutput, "2026-03-20", {
-      carryTasks: ["Create Jira stories"],
+      ...expectedWeeklyContent(),
+      carryInTasks: ["Create Jira stories"],
+      nextWeekTasks: ["Create Jira stories"],
       outcomes: ["Shipped the rollout"]
     }),
     false
@@ -346,11 +381,194 @@ Next Week Focus
 
   assert.equal(
     isValidWeeklyOllamaOutput(config, weeklyTemplate, generated, "2026-03-20", {
-      carryTasks: ["Follow up with infra"],
+      ...expectedWeeklyContent(),
+      carryInTasks: ["Follow up with infra"],
+      nextWeekTasks: ["Follow up with infra"],
       outcomes: ["Shipped the rollout"]
     }),
     true
   );
+});
+
+test("weekly validator rejects rewritten meeting bullets in cross-team impact", () => {
+  const config = testConfig();
+  const generated = `---
+week_friday: 2026-03-20
+approved: false
+---
+
+# Week of: 2026-03-20
+
+Task list from last Week:
+- Follow up with infra
+
+Work (Facts Only):
+Key outcomes shipped/delivered:
+- Shipped the rollout
+
+Problems solved / fires prevented:
+- Fixed logging
+
+Cross-team impact:
+- Met with Sprint planning with app team for weekly release targets.
+
+Attendance Summary:
+- Office: 5
+
+Task list for Next Week (Max 3)
+- Follow up with infra
+`;
+
+  assert.equal(
+    isValidWeeklyOllamaOutput(
+      config,
+      weeklyTemplate,
+      generated,
+      "2026-03-20",
+      expectedWeeklyContent({
+        carryInTasks: ["Follow up with infra"],
+        nextWeekTasks: ["Follow up with infra"],
+        outcomes: ["Shipped the rollout"],
+        meetings: ["Sprint planning with app team for weekly release targets"]
+      })
+    ),
+    false
+  );
+});
+
+test("weekly validator rejects personal or admin-only fires when stronger fire lines exist", () => {
+  const config = testConfig();
+  const generated = `---
+week_friday: 2026-03-20
+approved: false
+---
+
+# Week of: 2026-03-20
+
+Task list from last Week:
+- Follow up with infra
+
+Work (Facts Only):
+Key outcomes shipped/delivered:
+- Shipped the rollout
+
+Problems solved / fires prevented:
+- Cleaned up my shell aliases for release support tasks.
+
+Cross-team impact:
+- Coordinated release owners with QA.
+
+Attendance Summary:
+- Office: 5
+
+Task list for Next Week (Max 3)
+- Follow up with infra
+`;
+
+  assert.equal(
+    isValidWeeklyOllamaOutput(
+      config,
+      weeklyTemplate,
+      generated,
+      "2026-03-20",
+      expectedWeeklyContent({
+        carryInTasks: ["Follow up with infra"],
+        nextWeekTasks: ["Follow up with infra"],
+        outcomes: ["Shipped the rollout"],
+        fireLines: ["Validated that the rollout checklist catches missing environment variables before deploy time."],
+        fireExcludedLines: ["Cleaned up my shell aliases for release support tasks."]
+      })
+    ),
+    false
+  );
+});
+
+test("weekly draft separates carry-forward tasks from next-week tasks in fallback content", async () => {
+  const cwd = await createWorkspace();
+  const config = testConfig();
+  await writeText(path.join(cwd, "templates", "weekly.md"), weeklyTemplate);
+
+  await writeText(
+    path.join(cwd, "daily", "2026", "2026-03-16.md"),
+    `---
+date: 2026-03-16
+attendance: office
+approved: false
+---
+
+## Meetings:
+- Platform sync with SRE on alert fatigue reduction.
+
+## Work:
+### DevOps:
+- Fixed a noisy deploy alert in staging.
+
+## Notes:
+- Restored missing environment variable validation.
+
+## Task list for tomorrow:
+- [ ] Finish CI runner cleanup steps
+- [ ] Draft summary of alert tuning changes
+`
+  );
+
+  await writeText(
+    path.join(cwd, "daily", "2026", "2026-03-20.md"),
+    `---
+date: 2026-03-20
+attendance: office
+approved: false
+---
+
+## Meetings:
+- Friday release go/no-go with engineering leadership
+
+## Work:
+### DevOps:
+- Confirmed the secret mapping fix and closed the startup incident follow-up.
+
+### Personal:
+- Cleaned up my shell aliases for release support tasks.
+
+## Notes:
+- Release completed without the earlier migration delay.
+
+## Task list for tomorrow:
+- [ ] Expand config validation to more shared services
+- [ ] Revisit alert thresholds after one week of signal data
+`
+  );
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(JSON.stringify({ response: weeklyTemplate }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+
+  try {
+    const result = await generateWeeklyDraft(cwd, config, "2026-03-20", "2026-03-16");
+    const output = await readFile(result.outputPath, "utf8");
+
+    assert.match(result.warnings.join("\n"), /used deterministic fallback/i);
+    assert.match(output, /Task list from last Week:\n- Finish CI runner cleanup steps\n- Draft summary of alert tuning changes/);
+    assert.match(
+      output,
+      /Task list for Next Week \(Max 3\)\n- Expand config validation to more shared services\n- Revisit alert thresholds after one week of signal data/
+    );
+    assert.doesNotMatch(output, /Task list from last Week:\n- Expand config validation to more shared services/);
+    assert.match(output, /Cross-team impact:\n- Platform sync with SRE on alert fatigue reduction\./);
+    assert.doesNotMatch(output, /Cross-team impact:\n- Met with Platform sync/);
+    assert.match(output, /Problems solved \/ fires prevented:/);
+    assert.match(output, /- Fixed a noisy deploy alert in staging\./);
+    assert.match(output, /- Confirmed the secret mapping fix and closed the startup incident follow-up\./);
+    assert.doesNotMatch(
+      output,
+      /Problems solved \/ fires prevented:\n(?:.*\n)*- Cleaned up my shell aliases for release support tasks\./
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("weekly draft falls back when Ollama echoes the template", async () => {

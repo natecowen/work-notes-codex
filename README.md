@@ -313,6 +313,27 @@ tags:
   input_mode: frontmatter_or_inline
 ```
 
+## Weekly Section Semantics
+- `Task list from last Week` is the carry-forward list already open when the target week begins. It should not be a dump of every open task seen during the week.
+- `Problems solved / fires prevented` is limited to concrete fixes, remediations, incidents, and blockers addressed during the week. Personal/admin cleanup items do not belong here unless they clearly describe operational remediation.
+- `Cross-team impact` should preserve the meaning and wording of meetings and collaboration notes from the source dailies. Do not rewrite meeting bullets into synthetic `Met with ...` phrases.
+- `Task list for Next Week (Max 3)` is the forward-looking list of open tasks still relevant at the end of the week.
+
+The default weekly config uses these semantic source labels:
+
+```yaml
+weekly:
+  sections:
+    - id: tasks_last_week
+      source: carry_forward_tasks
+    - id: fires_prevented
+      source: fire_highlights
+    - id: cross_team_impact
+      source: collaboration_highlights
+    - id: next_week_tasks
+      source: upcoming_tasks
+```
+
 ## Run Modes
 Use one of these modes. Mode A is recommended.
 
