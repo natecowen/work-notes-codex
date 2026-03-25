@@ -1,6 +1,6 @@
 import matter from "gray-matter";
 import type { AppConfig, Attendance, DailyEntry, WorkCategoryGroup, DailySectionDefinition } from "../types.js";
-import { findDailySection, getDailyStructure, getDailyWorkCategoryLabels, normalizeHeadingLabel } from "./sections.js";
+import { findDailySection, getDailyStructure, normalizeHeadingLabel } from "./sections.js";
 
 function normalizeLine(line: string): string {
   return line.trim().replace(/^\-\s*/, "").trim();
@@ -177,7 +177,6 @@ export function parseDailyMarkdown(filePath: string, raw: string, config: AppCon
   const meetingsSection = findDailySection(config, "meetings");
   const workSection = findDailySection(config, "work");
   const notesSection = findDailySection(config, "notes");
-  const configuredWorkCategories = getDailyWorkCategoryLabels(config);
 
   const meetingsLines = extractSection(
     parsed.content,
@@ -207,14 +206,7 @@ export function parseDailyMarkdown(filePath: string, raw: string, config: AppCon
     attendance: data.attendance,
     meetings: meetingsLines,
     workLines,
-    workCategories:
-      configuredWorkCategories.length > 0
-        ? workCategories.filter((group) =>
-            configuredWorkCategories.some(
-              (label) => normalizeHeadingLabel(label) === normalizeHeadingLabel(group.category)
-            )
-          )
-        : workCategories,
+    workCategories,
     notesLines,
     tasksOpen: tasks.open,
     tasksDone: tasks.done,

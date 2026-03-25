@@ -195,6 +195,19 @@ function extractSectionContent(content: string, startHeading: string, endHeading
   return lines.slice(startIndex + 1, endIndex < 0 ? undefined : endIndex).join("\n").trim();
 }
 
+function extractSectionContentRaw(content: string, startHeading: string, endHeadings: string[]): string {
+  const lines = normalizeTemplate(content).split("\n");
+  const startIndex = lines.findIndex((line) => normalizeHeadingLabel(line) === normalizeHeadingLabel(startHeading));
+  if (startIndex < 0) return "";
+
+  const endIndex = lines.findIndex(
+    (line, index) =>
+      index > startIndex && endHeadings.map((heading) => normalizeHeadingLabel(heading)).includes(normalizeHeadingLabel(line))
+  );
+
+  return lines.slice(startIndex + 1, endIndex < 0 ? undefined : endIndex).join("\n");
+}
+
 function hasSubstantiveSectionContent(content: string): boolean {
   return content
     .split("\n")
@@ -217,6 +230,41 @@ function replaceSectionContent(content: string, startHeading: string, endHeading
   }
 
   return [...lines.slice(0, startIndex + 1), ...replacement.split("\n"), ...lines.slice(endIndex)].join("\n");
+}
+
+function replaceLeadingContent(content: string, firstHeading: string, replacement: string): string {
+  const lines = normalizeTemplate(content).split("\n");
+  const startIndex = lines.findIndex((line) => normalizeHeadingLabel(line) === normalizeHeadingLabel(firstHeading));
+  if (startIndex < 0) return content;
+  return [...replacement.split("\n"), ...lines.slice(startIndex)].join("\n");
+}
+
+function applyManagedSectionsFromScaffold(
+  baseContent: string,
+  scaffoldContent: string,
+  sections: Array<{ label: string }>
+): string {
+  if (sections.length === 0) return baseContent;
+
+  let content = replaceLeadingContent(
+    baseContent,
+    sections[0].label,
+    normalizeTemplate(scaffoldContent).split("\n").slice(
+      0,
+      normalizeTemplate(scaffoldContent)
+        .split("\n")
+        .findIndex((line) => normalizeHeadingLabel(line) === normalizeHeadingLabel(sections[0].label))
+    ).join("\n")
+  );
+
+  const sectionOrder = sections.map((section) => section.label);
+  for (const section of sections) {
+    const nextIndex = sectionOrder.findIndex((label) => label === section.label);
+    const replacement = extractSectionContentRaw(scaffoldContent, section.label, sectionOrder.slice(nextIndex + 1));
+    content = replaceSectionContent(content, section.label, sectionOrder.slice(nextIndex + 1), replacement);
+  }
+
+  return content;
 }
 
 function extractManagedSection(content: string, labels: string[], label: string): string {
@@ -414,6 +462,7 @@ export async function generateWeeklyDraft(
     attendance_summary: attendanceMd,
     next_week_tasks: nextWeekMd
   };
+  const renderedWeeklyScaffold = renderWeeklyFallback(template, config, fridayIso, weeklySectionValues);
 
   let content = renderWeeklyFallback(template, config, fridayIso, weeklySectionValues);
   try {
@@ -423,7 +472,7 @@ export async function generateWeeklyDraft(
       prompt
     );
     if (isValidWeeklyOllamaOutput(config, template, generated, fridayIso, { carryTasks: allOpenTasks, outcomes })) {
-      content = renderWeeklyFallback(template, config, fridayIso, weeklySectionValues);
+      content = applyManagedSectionsFromScaffold(generated, renderedWeeklyScaffold, weeklySections);
     } else {
       warnings.push("Ollama output did not match expected format; used deterministic fallback.");
     }
@@ -520,6 +569,7 @@ export async function generateMonthlyDraft(
   const templatePath = path.resolve(cwd, config.paths.templates_dir, "monthly.md");
   const template = await readText(templatePath);
   const monthlySectionValues = summarizeMonthlySections(config, weeklyInputs);
+  const renderedMonthlyScaffold = renderMonthlyFallback(template, config, month, monthlySectionValues);
 
   const prompt = [
     "Use fixed categories exactly as given in the template.",
@@ -535,7 +585,7 @@ export async function generateMonthlyDraft(
     renderRememberBlock(config, "Generate the monthly summary now as markdown.")
   ].join("\n");
 
-  let content = renderMonthlyFallback(template, config, month, monthlySectionValues);
+  let content = renderedMonthlyScaffold;
 
   try {
     const generated = await generateWithOllama(
@@ -544,7 +594,7 @@ export async function generateMonthlyDraft(
       prompt
     );
     if (isValidMonthlyOllamaOutput(config, template, generated, month, { hasWeeklyInputs: weeklyInputs.length > 0 })) {
-      content = renderMonthlyFallback(template, config, month, monthlySectionValues);
+      content = applyManagedSectionsFromScaffold(generated, renderedMonthlyScaffold, getMonthlyStructure(config).sections);
     } else {
       warnings.push("Ollama output did not match expected monthly format; used fallback template.");
     }

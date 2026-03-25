@@ -170,3 +170,46 @@ approved: false
     }
   ]);
 });
+
+test("parseDailyMarkdown keeps bullets under unconfigured markdown work headings", () => {
+  const parsed = parseDailyMarkdown(
+    "/tmp/2026-03-20.md",
+    `---
+date: 2026-03-20
+attendance: office
+approved: false
+---
+
+# Day: 2026-03-20
+
+## Meetings:
+- Standup
+
+## Work:
+### Misc
+- Investigated staging issue.
+
+### Development/Coding
+- Shipped the rollout.
+
+## Notes:
+- Captured context
+
+## Task list for tomorrow:
+- [ ] Create Jira stories
+`,
+    testConfig()
+  );
+
+  assert.deepEqual(parsed.workLines, ["Investigated staging issue.", "Shipped the rollout."]);
+  assert.deepEqual(parsed.workCategories, [
+    {
+      category: "General",
+      items: ["Investigated staging issue."]
+    },
+    {
+      category: "Development/Coding",
+      items: ["Shipped the rollout."]
+    }
+  ]);
+});
