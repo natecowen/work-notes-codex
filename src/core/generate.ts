@@ -9,6 +9,7 @@ import { buildStyleProfile, loadSampleWritingExamples, loadStyleProfile, toStyle
 import type { DailyEntry, WorkCategoryGroup } from "../types.js";
 import {
   findPeriodSection,
+  findDailySection,
   getMonthlyStructure,
   getWeeklyStructure,
   normalizeHeadingLabel
@@ -28,20 +29,39 @@ function sampleWritingLimit(config: AppConfig): number {
   return config.prompting?.sample_writing_limit ?? 2;
 }
 
-function defaultRememberRules(): string[] {
+function configuredWorkCategoryLabels(config: AppConfig): string[] {
+  return findDailySection(config, "work")?.categories?.map((category) => category.label) ?? [];
+}
+
+function defaultRememberRules(config: AppConfig): string[] {
+  const configuredCategories = configuredWorkCategoryLabels(config);
+  const categoryInstruction =
+    configuredCategories.length > 0
+      ? `Categorize appropriately using the configured work categories (${configuredCategories.join(", ")}).`
+      : "Categorize appropriately using the configured work categories.";
+
   return [
     "Be factual.",
     "Use action verbs.",
     "Include system, tool, and people names when available.",
-    "Categorize appropriately (DevOps, Development, Architecture, Leadership, Training).",
+    categoryInstruction,
     "Keep bullets concise but impactful."
   ];
 }
 
+function resolveConfiguredCategoryRule(config: AppConfig): string {
+  return defaultRememberRules(config)[3];
+}
+
 function rememberRules(config: AppConfig): string[] {
-  return config.prompting?.remember_rules && config.prompting.remember_rules.length > 0
-    ? config.prompting.remember_rules
-    : defaultRememberRules();
+  if (config.prompting?.remember_rules && config.prompting.remember_rules.length > 0) {
+    const nonCategoryRules = config.prompting.remember_rules.filter(
+      (rule) => !/^categorize appropriately\b/i.test(rule.trim())
+    );
+    return [...nonCategoryRules, resolveConfiguredCategoryRule(config)];
+  }
+
+  return defaultRememberRules(config);
 }
 
 function renderRememberBlock(config: AppConfig, finalInstruction: string): string {
@@ -115,10 +135,20 @@ function collectWeeklyWorkCategories(entries: DailyEntry[]): WorkCategoryGroup[]
   }));
 }
 
-function renderWeeklyKeyOutcomes(groups: WorkCategoryGroup[]): string {
+function renderWeeklyKeyOutcomes(config: AppConfig, groups: WorkCategoryGroup[]): string {
   if (groups.length === 0) return "- None captured";
 
-  return groups
+  const configuredOrder = configuredWorkCategoryLabels(config).map((label) => normalizeHeadingLabel(label));
+  const sortedGroups = [...groups].sort((left, right) => {
+    const leftIndex = configuredOrder.indexOf(normalizeHeadingLabel(left.category));
+    const rightIndex = configuredOrder.indexOf(normalizeHeadingLabel(right.category));
+    if (leftIndex < 0 && rightIndex < 0) return 0;
+    if (leftIndex < 0) return 1;
+    if (rightIndex < 0) return -1;
+    return leftIndex - rightIndex;
+  });
+
+  return sortedGroups
     .map((group) => [`**${group.category}:**`, ...group.items.map((item) => `- ${item}`)].join("\n"))
     .join("\n\n");
 }
@@ -199,6 +229,17 @@ function uniqueNonEmpty(lines: string[]): string[] {
   return [...new Set(lines.map((line) => line.trim()).filter(Boolean))];
 }
 
+function normalizeCollectedMonthlyLines(lines: string[]): string[] {
+  return uniqueNonEmpty(
+    lines
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .filter((line) => !line.startsWith("**"))
+      .map((line) => line.replace(/^[-*]\s*/, "").trim())
+      .filter(Boolean)
+  );
+}
+
 function inferWeeklyFireLines(entries: DailyEntry[]): string[] {
   const candidates = entries.flatMap((entry) => [...entry.notesLines, ...entry.workLines]);
   const signal = /(fixed|resolved|prevent|restored|unblocked|troubleshoot|cleanup|cleaned|validated|stabilized)/i;
@@ -219,12 +260,12 @@ function summarizeMonthlySections(config: AppConfig, weeklyInputs: Array<{ path:
   const collect = (sectionId: string): string[] => {
     const section = findPeriodSection(config, "weekly", sectionId);
     if (!section) return [];
-    return uniqueNonEmpty(
+    return normalizeCollectedMonthlyLines(
       weeklyInputs.flatMap((item) =>
         extractManagedSection(item.content, weeklyLabels, section.label)
           .split("\n")
           .map((line) => line.trim())
-          .filter((line) => line.startsWith("-") || line.startsWith("**"))
+          .filter((line) => line.startsWith("-") || line.startsWith("*"))
       )
     );
   };
@@ -336,7 +377,7 @@ export async function generateWeeklyDraft(
   const allOpenTasks = entries.flatMap((e) => e.tasksOpen);
   const outcomes = entries.flatMap((e) => e.workLines.map((line) => line.replace(/^\-\s*/, "").trim())).filter(Boolean);
   const weeklyWorkCategories = collectWeeklyWorkCategories(entries);
-  const keyOutcomesMd = renderWeeklyKeyOutcomes(weeklyWorkCategories);
+  const keyOutcomesMd = renderWeeklyKeyOutcomes(config, weeklyWorkCategories);
   const meetings = [...new Set(entries.flatMap((e) => e.meetings))];
   const attendance = aggregateAttendance(entries);
   const attendanceMd = renderAttendance(attendance);
@@ -382,14 +423,7 @@ export async function generateWeeklyDraft(
       prompt
     );
     if (isValidWeeklyOllamaOutput(config, template, generated, fridayIso, { carryTasks: allOpenTasks, outcomes })) {
-      content = generated;
-      const sectionOrder = weeklySections.map((section) => section.label);
-      for (const [sectionId, replacement] of Object.entries(weeklySectionValues)) {
-        const section = findPeriodSection(config, "weekly", sectionId);
-        if (!section) continue;
-        const nextIndex = sectionOrder.findIndex((label) => label === section.label);
-        content = replaceSectionContent(content, section.label, sectionOrder.slice(nextIndex + 1), replacement);
-      }
+      content = renderWeeklyFallback(template, config, fridayIso, weeklySectionValues);
     } else {
       warnings.push("Ollama output did not match expected format; used deterministic fallback.");
     }
@@ -510,14 +544,7 @@ export async function generateMonthlyDraft(
       prompt
     );
     if (isValidMonthlyOllamaOutput(config, template, generated, month, { hasWeeklyInputs: weeklyInputs.length > 0 })) {
-      content = generated;
-      const sectionOrder = getMonthlyStructure(config).sections.map((section) => section.label);
-      for (const [sectionId, replacement] of Object.entries(monthlySectionValues)) {
-        const section = findPeriodSection(config, "monthly", sectionId);
-        if (!section) continue;
-        const nextIndex = sectionOrder.findIndex((label) => label === section.label);
-        content = replaceSectionContent(content, section.label, sectionOrder.slice(nextIndex + 1), replacement);
-      }
+      content = renderMonthlyFallback(template, config, month, monthlySectionValues);
     } else {
       warnings.push("Ollama output did not match expected monthly format; used fallback template.");
     }

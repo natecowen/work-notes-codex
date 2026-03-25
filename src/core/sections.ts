@@ -210,6 +210,10 @@ export function findDailySection(config: AppConfig, id: string): DailySectionDef
   return getDailyStructure(config).sections.find((section) => section.id === id);
 }
 
+export function getDailyWorkCategoryLabels(config: AppConfig): string[] {
+  return findDailySection(config, "work")?.categories?.map((category) => category.label) ?? [];
+}
+
 export function findPeriodSection(
   config: AppConfig,
   period: "weekly" | "monthly",
@@ -222,4 +226,3 @@ export function findPeriodSection(
 export function sectionHeadings(sections: Array<{ label: string }>): string[] {
   return sections.map((section) => normalizeHeadingLabel(section.label));
 }
-

@@ -98,6 +98,28 @@ function testConfig(): AppConfig {
     tags: {
       enabled: false,
       input_mode: "frontmatter"
+    },
+    daily: {
+      sections: [
+        { id: "meetings", label: "Meetings", type: "bullet_list" },
+        {
+          id: "work",
+          label: "Work",
+          type: "categorized_list",
+          categories: [
+            { id: "development_coding", label: "Development/Coding" },
+            { id: "architecture", label: "Architecture" },
+            { id: "leadership_mentoring", label: "Leadership/Mentoring" },
+            { id: "training_learning", label: "Training/Learning" },
+            { id: "devops", label: "DevOps" },
+            { id: "architecture_devops", label: "Architecture/Devops" },
+            { id: "leadership_training", label: "Leadership/Training" },
+            { id: "personal", label: "Personal" }
+          ]
+        },
+        { id: "notes", label: "Notes", type: "free_text" },
+        { id: "tasks_tomorrow", label: "Task list for tomorrow", type: "bullet_list" }
+      ]
     }
   };
 }
@@ -473,6 +495,170 @@ Task list for Next Week (Max 3)
   }
 });
 
+test("weekly draft does not carry markdown category headings through as outcome bullets", async () => {
+  const cwd = await createWorkspace();
+  const config = testConfig();
+  await writeText(path.join(cwd, "templates", "weekly.md"), weeklyTemplate);
+  await writeText(
+    path.join(cwd, "daily", "2026", "2026-03-20.md"),
+    `---
+date: 2026-03-20
+attendance: office
+approved: false
+---
+
+## Meetings:
+- Sprint
+
+## Work:
+### Development/Coding
+- Cleaned and removed old unused logic in Branch consumer.
+
+### Architecture
+- Planned work and story creation for AAR pipeline changes.
+
+### Leadership/Mentoring
+- Met with Paul and Bryan to discuss open AAR questions.
+
+## Notes:
+- Supported the sprint.
+
+## Task list for tomorrow:
+- [ ] Create Jira stories
+`
+  );
+
+  const generatedWeekly = `---
+week_friday: 2026-03-20
+approved: false
+---
+
+# Week of: 2026-03-20
+
+Task list from last Week:
+- Create Jira stories
+
+Work (Facts Only):
+Key outcomes shipped/delivered:
+- Placeholder from model
+
+Problems solved / fires prevented:
+- Supported the sprint.
+
+Cross-team impact:
+- Met with another team.
+
+Attendance Summary:
+- Office: 1
+- WFH: 0
+- Holiday: 0
+- Sick: 0
+- Vacation: 0
+
+Task list for Next Week (Max 3)
+- Create Jira stories
+`;
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(JSON.stringify({ response: generatedWeekly }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+
+  try {
+    const result = await generateWeeklyDraft(cwd, config, "2026-03-20", "2026-03-16");
+    const output = await readFile(result.outputPath, "utf8");
+
+    assert.equal(result.warnings.length, 1);
+    assert.match(output, /\*\*Development\/Coding:\*\*/);
+    assert.match(output, /\*\*Architecture:\*\*/);
+    assert.match(output, /\*\*Leadership\/Mentoring:\*\*/);
+    assert.doesNotMatch(output, /^### /m);
+    assert.doesNotMatch(output, /- ### /);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("weekly draft preserves non-managed template headings after successful Ollama output", async () => {
+  const cwd = await createWorkspace();
+  const config = testConfig();
+  await writeText(path.join(cwd, "templates", "weekly.md"), weeklyTemplate);
+  await writeText(
+    path.join(cwd, "daily", "2026", "2026-03-20.md"),
+    `---
+date: 2026-03-20
+attendance: office
+approved: false
+---
+
+## Meetings:
+- Sprint
+
+## Work:
+### Development/Coding
+- Removed unused seasonal overrides from Branch consumer.
+
+### DevOps
+- Fixed app startup logging visibility.
+
+## Notes:
+- Supported the sprint.
+
+## Task list for tomorrow:
+- [ ] Create Jira stories
+`
+  );
+
+  const generatedWeekly = `---
+week_friday: 2026-03-20
+approved: false
+---
+
+# Week of: 2026-03-20
+
+Task list from last Week:
+- Create Jira stories
+Key outcomes shipped/delivered:
+- Placeholder from model
+Problems solved / fires prevented:
+- Supported the sprint.
+Cross-team impact:
+- Met with another team.
+Attendance Summary:
+- Office: 1
+- WFH: 0
+- Holiday: 0
+- Sick: 0
+- Vacation: 0
+Task list for Next Week (Max 3)
+- Create Jira stories
+`;
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(JSON.stringify({ response: generatedWeekly }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+
+  try {
+    const result = await generateWeeklyDraft(cwd, config, "2026-03-20", "2026-03-16");
+    const output = await readFile(result.outputPath, "utf8");
+
+    assert.equal(result.warnings.length, 1);
+    assert.match(result.warnings[0], /Missing daily files:/);
+    assert.match(output, /Work \(Facts Only\):\nKey outcomes shipped\/delivered:/);
+    assert.match(output, /\n\nProblems solved \/ fires prevented:/);
+    assert.match(output, /\n\nCross-team impact:/);
+    assert.match(output, /\n\nAttendance Summary:/);
+    assert.match(output, /\n\nTask list for Next Week \(Max 3\)/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("weekly draft overwrites the final managed section with deterministic content", async () => {
   const cwd = await createWorkspace();
   const config = testConfig();
@@ -597,6 +783,147 @@ Task list for Next Week (Max 3)
     assert.match(output, /month: 2026-03/);
     assert.doesNotMatch(output, /{{MONTH}}/);
     assert.match(output, /Top Outcomes/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("monthly draft flattens weekly categorized outcomes into clean bullets", async () => {
+  const cwd = await createWorkspace();
+  const config = testConfig();
+  await writeText(path.join(cwd, "templates", "monthly.md"), monthlyTemplate);
+  await writeText(
+    path.join(cwd, "weekly", "2026", "2026-03-20-ISOWeek.md"),
+    `---
+week_friday: 2026-03-20
+approved: true
+---
+
+# Week of: 2026-03-20
+
+Task list from last Week:
+- Follow up with infra
+
+Work (Facts Only):
+Key outcomes shipped/delivered:
+**Development/Coding:**
+- Removed unused seasonal overrides from Branch consumer.
+- Validated and deployed Quartz and Calc consumer changes.
+
+**DevOps:**
+- Fixed app startup logging visibility.
+
+Problems solved / fires prevented:
+- Resolved flaky deploy.
+
+Cross-team impact:
+- Unblocked another team.
+
+Attendance Summary:
+- Office: 5
+- WFH: 0
+
+Task list for Next Week (Max 3)
+- Stabilize rollouts
+`
+  );
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(JSON.stringify({ response: monthlyTemplate }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+
+  try {
+    const result = await generateMonthlyDraft(cwd, config, "2026-03");
+    const output = await readFile(result.outputPath, "utf8");
+
+    assert.match(result.warnings.join("\n"), /used fallback template/i);
+    assert.match(output, /1\. Top Outcomes:\n- Removed unused seasonal overrides from Branch consumer\./);
+    assert.match(output, /- Validated and deployed Quartz and Calc consumer changes\./);
+    assert.match(output, /- Fixed app startup logging visibility\./);
+    assert.match(output, /2\. Problems Solved \/ Fires Prevented\n- Resolved flaky deploy\./);
+    assert.match(output, /3\. Cross-Team Impact & Leadership\n- Unblocked another team\./);
+    assert.match(output, /5\. Next Month Focus\n- Stabilize rollouts/);
+    assert.doesNotMatch(output, /- \*\*/);
+    assert.doesNotMatch(output, /- - /);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("monthly draft preserves template spacing after successful Ollama output", async () => {
+  const cwd = await createWorkspace();
+  const config = testConfig();
+  await writeText(path.join(cwd, "templates", "monthly.md"), monthlyTemplate);
+  await writeText(
+    path.join(cwd, "weekly", "2026", "2026-03-20-ISOWeek.md"),
+    `---
+week_friday: 2026-03-20
+approved: true
+---
+
+# Week of: 2026-03-20
+
+Task list from last Week:
+- Follow up with infra
+
+Work (Facts Only):
+Key outcomes shipped/delivered:
+**Development/Coding:**
+- Delivered reporting updates.
+
+Problems solved / fires prevented:
+- Resolved flaky deploy.
+
+Cross-team impact:
+- Unblocked another team.
+
+Attendance Summary:
+- Office: 5
+
+Task list for Next Week (Max 3)
+- Stabilize rollouts
+`
+  );
+
+  const generatedMonthly = `---
+month: 2026-03
+approved: false
+---
+
+# 2026-03 Monthly Recap
+1. Top Outcomes:
+- Model summary
+2. Problems Solved / Fires Prevented
+- Model fire
+3. Cross-Team Impact & Leadership
+- Model impact
+4. Risks & Blockers
+- None captured
+5. Next Month Focus
+- Model next focus
+`;
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(JSON.stringify({ response: generatedMonthly }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+
+  try {
+    const result = await generateMonthlyDraft(cwd, config, "2026-03");
+    const output = await readFile(result.outputPath, "utf8");
+
+    assert.equal(result.warnings.length, 0);
+    assert.match(output, /# 2026-03 Monthly Recap\n\n1\. Top Outcomes:/);
+    assert.match(output, /\n\n2\. Problems Solved \/ Fires Prevented/);
+    assert.match(output, /\n\n3\. Cross-Team Impact & Leadership/);
+    assert.match(output, /\n\n4\. Risks & Blockers/);
+    assert.match(output, /\n\n5\. Next Month Focus/);
+    assert.doesNotMatch(output, /\n1\. Top Outcomes:\n- Model summary\n2\./);
   } finally {
     globalThis.fetch = originalFetch;
   }
