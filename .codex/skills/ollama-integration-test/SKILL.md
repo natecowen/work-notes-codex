@@ -126,6 +126,23 @@ Inspect the prompt package and verify:
 - source notes are included
 - sample writing is included when available
 
+## Ollama Reachability
+
+Assume the sandbox cannot reliably reach the user's local Ollama server on this repo.
+
+Use the sandbox for:
+
+- building the app
+- creating the disposable workspace
+- copying config and templates
+- writing fake notes
+- exporting the prompt package
+- reading generated files
+
+Use an outside-the-sandbox command with approval for the live Ollama generation unless the user explicitly wants to verify sandbox fallback behavior first.
+
+If the user does want to verify fallback behavior, it is fine to try the sandbox run once, but treat an Ollama fetch failure as expected rather than surprising.
+
 ## Run The Live Ollama Generation
 
 Run the real command against the disposable workspace:
@@ -135,7 +152,14 @@ node /abs/path/to/repo/dist/cli.js generate weekly --friday YYYY-MM-DD
 node /abs/path/to/repo/dist/cli.js generate monthly --month YYYY-MM
 ```
 
-If Ollama is unreachable from the sandbox, rerun the command outside the sandbox with approval.
+Prefer requesting approval and running the live Ollama command outside the sandbox immediately.
+
+Only run the live command in the sandbox first when one of these is true:
+
+- the user explicitly asked to test sandbox behavior
+- you are intentionally reproducing fallback handling
+
+If a sandbox run is attempted and fails with a fetch or connection error, rerun outside the sandbox with approval and continue the integration test.
 
 ## Inspect The Output
 
@@ -218,7 +242,7 @@ When the user asks to "run an integration test" for this app:
 3. Copy config and templates.
 4. Populate fake notes matching the configured categories.
 5. Export the prompt package.
-6. Run the live generation command through Ollama.
+6. Run the live generation command through Ollama outside the sandbox with approval.
 7. Inspect the prompt and generated markdown.
 8. Report findings clearly.
 9. Remove the disposable workspace.
