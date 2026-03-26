@@ -75,12 +75,23 @@ function extractCategoryLabel(line: string): string | null {
   return match ? match[1] : null;
 }
 
+function extractWorkCategoryLabel(line: string): string | null {
+  const markdownHeading = parseMarkdownHeading(line);
+  if (markdownHeading) {
+    const headingLabel = markdownHeading.label.trim().replace(/:\s*$/, "");
+    return headingLabel ? headingLabel : null;
+  }
+
+  return extractCategoryLabel(line);
+}
+
 function normalizeWorkLines(lines: string[]): string[] {
   return lines
     .map((line) => normalizeLine(line))
     .filter(Boolean)
     .filter((line) => line !== "-")
-    .filter((line) => !isCategoryHeadingLine(line));
+    .filter((line) => !isCategoryHeadingLine(line))
+    .filter((line) => !parseMarkdownHeading(line));
 }
 
 function parseWorkSection(
@@ -93,6 +104,7 @@ function parseWorkSection(
   const configuredCategories = new Map(
     (workSection?.categories ?? []).map((category) => [normalizeHeadingLabel(category.label), category.label])
   );
+  const hasConfiguredCategories = configuredCategories.size > 0;
 
   const ensureCategory = (category: string): WorkCategoryGroup => {
     const existing = workCategories.find((group) => group.category === category);
@@ -103,13 +115,23 @@ function parseWorkSection(
   };
 
   for (const line of lines) {
-    const markdownHeading = parseMarkdownHeading(line);
-    const categoryLabel = markdownHeading ? extractCategoryLabel(markdownHeading.label) : extractCategoryLabel(line);
-    if (categoryLabel) {
-      const normalized = normalizeHeadingLabel(categoryLabel);
-      currentCategory = ensureCategory(configuredCategories.get(normalized) ?? categoryLabel);
+    const headingLabel = extractWorkCategoryLabel(line);
+    if (headingLabel) {
+      const normalized = normalizeHeadingLabel(headingLabel);
+      const configuredLabel = configuredCategories.get(normalized);
+      if (configuredLabel) {
+        currentCategory = ensureCategory(configuredLabel);
+        continue;
+      }
+      if (!hasConfiguredCategories) {
+        currentCategory = ensureCategory(headingLabel);
+        continue;
+      }
+      currentCategory = null;
       continue;
     }
+
+    if (parseMarkdownHeading(line)) continue;
 
     const normalized = normalizeLine(line);
     if (!normalized || normalized === "-") continue;

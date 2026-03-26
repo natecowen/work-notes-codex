@@ -44,7 +44,7 @@ export const DEFAULT_WEEKLY_SECTIONS: OutputSectionDefinition[] = [
     label: "Problems solved / fires prevented",
     type: "bullet_list",
     placeholder: "{{FIRES_PREVENTED}}",
-    source: "notes_and_work",
+    source: "fire_highlights",
     required: true
   },
   {
@@ -52,7 +52,7 @@ export const DEFAULT_WEEKLY_SECTIONS: OutputSectionDefinition[] = [
     label: "Cross-team impact",
     type: "bullet_list",
     placeholder: "{{CROSS_TEAM_IMPACT}}",
-    source: "meetings_and_notes",
+    source: "collaboration_highlights",
     required: true
   },
   {
@@ -210,6 +210,10 @@ export function findDailySection(config: AppConfig, id: string): DailySectionDef
   return getDailyStructure(config).sections.find((section) => section.id === id);
 }
 
+export function getDailyWorkCategoryLabels(config: AppConfig): string[] {
+  return findDailySection(config, "work")?.categories?.map((category) => category.label) ?? [];
+}
+
 export function findPeriodSection(
   config: AppConfig,
   period: "weekly" | "monthly",
@@ -222,4 +226,3 @@ export function findPeriodSection(
 export function sectionHeadings(sections: Array<{ label: string }>): string[] {
   return sections.map((section) => normalizeHeadingLabel(section.label));
 }
-
