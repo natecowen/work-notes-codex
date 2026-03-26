@@ -716,6 +716,77 @@ approved: false
   }
 });
 
+test("weekly draft does not treat mid-week tasks as carry-forward when Monday is missing", async () => {
+  const cwd = await createWorkspace();
+  const config = testConfig();
+  await writeText(path.join(cwd, "templates", "weekly.md"), weeklyTemplate);
+
+  await writeText(
+    path.join(cwd, "daily", "2026", "2026-03-18.md"),
+    `---
+date: 2026-03-18
+attendance: office
+approved: false
+---
+
+## Meetings:
+- Team sync
+
+## Work:
+### DevOps:
+- Fixed staging alert routing.
+
+## Notes:
+- Captured deployment context.
+
+## Task list for tomorrow:
+- [ ] Draft rollout follow-up
+`
+  );
+
+  await writeText(
+    path.join(cwd, "daily", "2026", "2026-03-20.md"),
+    `---
+date: 2026-03-20
+attendance: office
+approved: false
+---
+
+## Meetings:
+- Friday release sync
+
+## Work:
+### DevOps:
+- Closed the alert tuning work.
+
+## Notes:
+- Captured release wrap-up.
+
+## Task list for tomorrow:
+- [ ] Plan the next tuning pass
+`
+  );
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(JSON.stringify({ response: weeklyTemplate }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+
+  try {
+    const result = await generateWeeklyDraft(cwd, config, "2026-03-20", "2026-03-16");
+    const output = await readFile(result.outputPath, "utf8");
+
+    assert.match(result.warnings.join("\n"), /Missing daily files: 2026-03-16, 2026-03-17, 2026-03-19/);
+    assert.match(output, /Task list from last Week:\n- None captured/);
+    assert.doesNotMatch(output, /Task list from last Week:\n- Draft rollout follow-up/);
+    assert.match(output, /Task list for Next Week \(Max 3\)\n- Plan the next tuning pass/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("weekly draft falls back when Ollama echoes the template", async () => {
   const cwd = await createWorkspace();
   const config = testConfig();
@@ -853,6 +924,51 @@ Task list for Next Week (Max 3)
     assert.match(output, /\*\*DevOps:\*\*/);
     assert.match(output, /- Fixed app startup logging visibility\./);
     assert.doesNotMatch(output, /- Generic summary from model/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("weekly draft does not treat technical notes with bare `with` as cross-team impact", async () => {
+  const cwd = await createWorkspace();
+  const config = testConfig();
+  await writeText(path.join(cwd, "templates", "weekly.md"), weeklyTemplate);
+  await writeText(
+    path.join(cwd, "daily", "2026", "2026-03-20.md"),
+    `---
+date: 2026-03-20
+attendance: office
+approved: false
+---
+
+## Meetings:
+
+## Work:
+### DevOps:
+- Fixed the rollout validation.
+
+## Notes:
+- Validated rollout with canary data.
+- Updated config with new defaults.
+
+## Task list for tomorrow:
+- [ ] Create Jira stories
+`
+  );
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(JSON.stringify({ response: weeklyTemplate }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+
+  try {
+    const result = await generateWeeklyDraft(cwd, config, "2026-03-20", "2026-03-16");
+    const output = await readFile(result.outputPath, "utf8");
+
+    assert.match(result.warnings.join("\n"), /used deterministic fallback/i);
+    assert.match(output, /Cross-team impact:\n- None captured/);
   } finally {
     globalThis.fetch = originalFetch;
   }

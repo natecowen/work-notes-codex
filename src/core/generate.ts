@@ -429,19 +429,21 @@ function inferWeeklyFireLines(entries: DailyEntry[]): { included: string[]; excl
 function inferWeeklyImpactLines(entries: DailyEntry[]): string[] {
   const meetingLines = uniqueNonEmpty(entries.flatMap((entry) => entry.meetings.map(normalizeLinePunctuation)));
   const noteLines = uniqueNonEmpty(entries.flatMap((entry) => normalizedNotes(entry).map(normalizeLinePunctuation)));
-  const signal = /\b(team|helped|assisted|supported|partner(?:ed)?|stakeholder|mentor(?:ed|ing)?|coordinated|briefed|with)\b/i;
-  const matched = uniqueNonEmpty([...meetingLines, ...noteLines].filter((line) => signal.test(line)));
+  const noteSignal =
+    /\b(team|helped|assisted|supported|partner(?:ed)?|stakeholder|mentor(?:ed|ing)?|coordinated|briefed|collaborat(?:ed|ing)|met with|worked with|paired with)\b/i;
+  const matchedNotes = uniqueNonEmpty(noteLines.filter((line) => noteSignal.test(line)));
+  const matched = uniqueNonEmpty([...meetingLines, ...matchedNotes]);
   return matched.length > 0 ? matched : meetingLines.slice(0, 5);
 }
 
-function deriveWeeklyContent(entries: DailyEntry[]): WeeklyDerivedContent {
+function deriveWeeklyContent(entries: DailyEntry[], mondayIso?: string): WeeklyDerivedContent {
   const outcomes = entries.flatMap((entry) => entry.workLines.map(stripListMarker)).filter(Boolean);
   const weeklyWorkCategories = collectWeeklyWorkCategories(entries);
   const meetings = uniqueNonEmpty(entries.flatMap((entry) => entry.meetings));
   const notes = uniqueNonEmpty(entries.flatMap((entry) => normalizedNotes(entry)));
   const firstEntry = entries[0];
   const lastEntry = entries[entries.length - 1];
-  const carryInTasks = uniqueNonEmpty(firstEntry?.tasksOpen ?? []);
+  const carryInTasks = firstEntry && (!mondayIso || firstEntry.date === mondayIso) ? uniqueNonEmpty(firstEntry.tasksOpen) : [];
   const nextWeekTasks = uniqueNonEmpty(lastEntry?.tasksOpen ?? []).slice(0, 3);
   const fireAnalysis = inferWeeklyFireLines(entries);
 
@@ -648,7 +650,7 @@ export async function generateWeeklyDraft(
   const { entries, missingDates } = await loadDailyEntriesForWeek(cwd, config, mondayIso);
   if (missingDates.length > 0) warnings.push(`Missing daily files: ${missingDates.join(", ")}`);
 
-  const weeklyContent = deriveWeeklyContent(entries);
+  const weeklyContent = deriveWeeklyContent(entries, mondayIso);
   const keyOutcomesMd = renderWeeklyKeyOutcomes(config, weeklyContent.weeklyWorkCategories);
   const attendance = aggregateAttendance(entries);
   const attendanceMd = renderAttendance(attendance);
@@ -745,7 +747,7 @@ export async function exportWeeklyPrompt(
   const { entries, missingDates } = await loadDailyEntriesForWeek(cwd, config, mondayIso);
   if (missingDates.length > 0) warnings.push(`Missing daily files: ${missingDates.join(", ")}`);
 
-  const weeklyContent = deriveWeeklyContent(entries);
+  const weeklyContent = deriveWeeklyContent(entries, mondayIso);
   const attendance = aggregateAttendance(entries);
   const attendanceMd = renderAttendance(attendance);
   const templatePath = path.resolve(cwd, config.paths.templates_dir, "weekly.md");
