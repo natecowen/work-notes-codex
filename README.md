@@ -88,7 +88,9 @@ npm run dev -- validate
 npm run dev -- generate daily --date 2026-02-18
 npm run dev -- generate dailies --friday 2026-02-20
 npm run dev -- generate weekly --friday 2026-02-20 --export-prompt
+npm run dev -- generate weekly --friday 2026-02-20 --debug
 npm run dev -- generate weekly --friday 2026-02-20
+npm run dev -- generate monthly --month 2026-02 --debug
 npm run dev -- generate monthly --month 2026-02
 npm run dev -- approve weekly --friday 2026-02-20
 ```
@@ -111,7 +113,7 @@ Template placeholders and `SECTION` directives control how scaffolded and genera
 ## Generation Rules
 Daily notes use frontmatter for machine-readable metadata. Weekly generation reads Monday through Friday daily files and warns on missing days. Monthly generation reads weekly files in the target month. Approval is explicit: drafts are reviewed first, then moved into `notes/weekly` or `notes/monthly` only after approval.
 
-Voice/style matching is derived from your own weekly and monthly samples, typically in `notes/weekly` and `notes/monthly`. External prompt export is available when you want to generate from another LLM instead of Ollama for a given run.
+Voice/style matching is derived from your own weekly and monthly samples, typically in `notes/weekly` and `notes/monthly`. External prompt export is available when you want to generate from another LLM instead of Ollama for a given run. Debug mode is available on weekly and monthly generation when you want the draft to include the exact Ollama prompt, raw response, and validation outcome.
 
 For the daily markdown contract, weekly/monthly section semantics, style-profile behavior, approval flow, and prompt export details, see [docs/generation-rules.md](./docs/generation-rules.md).
 

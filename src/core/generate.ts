@@ -15,6 +15,25 @@ import {
   normalizeHeadingLabel
 } from "./sections.js";
 
+interface ValidationResult {
+  ok: boolean;
+  reason?: string;
+}
+
+interface DebugPayload {
+  enabled: boolean;
+  systemPrompt: string;
+  prompt: string;
+  rawResponse?: string;
+  validation: ValidationResult;
+  usedFallback: boolean;
+  error?: string;
+}
+
+interface GenerateDraftOptions {
+  debug?: boolean;
+}
+
 function renderAttendance(totals: ReturnType<typeof aggregateAttendance>): string {
   return [
     `- Office: ${totals.office}`,
@@ -311,6 +330,50 @@ function normalizeCollectedMonthlyLines(lines: string[]): string[] {
   );
 }
 
+function escapeCodeFence(content: string): string {
+  return content.replaceAll("```", "``\\`");
+}
+
+function renderDebugBlock(debug: DebugPayload): string {
+  if (!debug.enabled) return "";
+
+  const validationLines = [
+    `- Accepted: ${debug.validation.ok ? "yes" : "no"}`,
+    `- Used fallback: ${debug.usedFallback ? "yes" : "no"}`,
+    `- Reason: ${debug.validation.reason ?? (debug.validation.ok ? "Output passed validation." : "No validation reason recorded.")}`
+  ];
+
+  if (debug.error) {
+    validationLines.push(`- Error: ${debug.error}`);
+  }
+
+  const rawResponse = debug.rawResponse?.length ? debug.rawResponse : "[unavailable]";
+
+  return [
+    "---",
+    "",
+    "# Debug",
+    "",
+    "## Validation",
+    ...validationLines,
+    "",
+    "## System Prompt",
+    "```text",
+    escapeCodeFence(debug.systemPrompt),
+    "```",
+    "",
+    "## Prompt",
+    "```text",
+    escapeCodeFence(debug.prompt),
+    "```",
+    "",
+    "## Raw Ollama Response",
+    "```text",
+    escapeCodeFence(rawResponse),
+    "```"
+  ].join("\n");
+}
+
 interface WeeklyDerivedContent {
   carryInTasks: string[];
   nextWeekTasks: string[];
@@ -426,28 +489,44 @@ export function isValidWeeklyOllamaOutput(
   fridayIso: string,
   expected: WeeklyDerivedContent
 ): boolean {
+  return validateWeeklyOllamaOutput(config, template, generated, fridayIso, expected).ok;
+}
+
+function validateWeeklyOllamaOutput(
+  config: AppConfig,
+  template: string,
+  generated: string,
+  fridayIso: string,
+  expected: WeeklyDerivedContent
+): ValidationResult {
   const normalizedGenerated = normalizeTemplate(generated);
   const labels = getWeeklyStructure(config).sections.map((section) => section.label);
-  if (!normalizedGenerated) return false;
-  if (normalizedGenerated === normalizeTemplate(template)) return false;
-  if (hasTemplatePlaceholders(normalizedGenerated)) return false;
-  if (!normalizedGenerated.includes(fridayIso)) return false;
+  if (!normalizedGenerated) return { ok: false, reason: "Ollama output was empty after trimming." };
+  if (normalizedGenerated === normalizeTemplate(template)) {
+    return { ok: false, reason: "Ollama output matched the weekly template without filling it in." };
+  }
+  if (hasTemplatePlaceholders(normalizedGenerated)) {
+    return { ok: false, reason: "Ollama output still contains template placeholders." };
+  }
+  if (!normalizedGenerated.includes(fridayIso)) {
+    return { ok: false, reason: `Ollama output did not include the target Friday ${fridayIso}.` };
+  }
   for (const section of getWeeklyStructure(config).sections.filter((item) => item.required !== false)) {
     if (!normalizedGenerated.split("\n").some((line) => normalizeHeadingLabel(line) === normalizeHeadingLabel(section.label))) {
-      return false;
+      return { ok: false, reason: `Ollama output is missing required weekly heading: ${section.label}.` };
     }
   }
   if (
     expected.carryInTasks.length > 0 &&
     !hasSubstantiveSectionContent(extractManagedSection(normalizedGenerated, labels, findPeriodSection(config, "weekly", "tasks_last_week")!.label))
   ) {
-    return false;
+    return { ok: false, reason: "Task list from last Week was empty even though carry-forward tasks existed." };
   }
   if (
     expected.outcomes.length > 0 &&
       !hasSubstantiveSectionContent(extractManagedSection(normalizedGenerated, labels, findPeriodSection(config, "weekly", "key_outcomes")!.label))
   ) {
-    return false;
+    return { ok: false, reason: "Key outcomes shipped/delivered was empty even though source work lines existed." };
   }
   const tasksLastWeek = extractBulletItems(
     extractManagedSection(normalizedGenerated, labels, findPeriodSection(config, "weekly", "tasks_last_week")!.label)
@@ -468,7 +547,7 @@ export function isValidWeeklyOllamaOutput(
     tasksLastWeek.every((line) => expected.nextWeekTasks.includes(line)) &&
     !expected.carryInTasks.every((line) => expected.nextWeekTasks.includes(line))
   ) {
-    return false;
+    return { ok: false, reason: "Task list from last Week was overwritten with end-of-week open tasks." };
   }
 
   const sourceMeetings = new Set(expected.meetings.map(normalizeSentence));
@@ -480,14 +559,14 @@ export function isValidWeeklyOllamaOutput(
       return sourceMeetings.has(normalizeSentence(rewritten));
     })
   ) {
-    return false;
+    return { ok: false, reason: "Cross-team impact rewrote meeting bullets into `Met with ...` phrasing." };
   }
 
   if (fires.some((line) => expected.fireExcludedLines.some((excluded) => normalizeSentence(excluded) === normalizeSentence(line)))) {
-    return false;
+    return { ok: false, reason: "Problems solved / fires prevented included a line that should have been excluded." };
   }
 
-  return true;
+  return { ok: true, reason: "Output passed weekly validation." };
 }
 
 export function isValidMonthlyOllamaOutput(
@@ -497,24 +576,40 @@ export function isValidMonthlyOllamaOutput(
   month: string,
   expected: { hasWeeklyInputs: boolean }
 ): boolean {
+  return validateMonthlyOllamaOutput(config, template, generated, month, expected).ok;
+}
+
+function validateMonthlyOllamaOutput(
+  config: AppConfig,
+  template: string,
+  generated: string,
+  month: string,
+  expected: { hasWeeklyInputs: boolean }
+): ValidationResult {
   const normalizedGenerated = normalizeTemplate(generated);
   const labels = getMonthlyStructure(config).sections.map((section) => section.label);
-  if (!normalizedGenerated) return false;
-  if (normalizedGenerated === normalizeTemplate(template)) return false;
-  if (hasTemplatePlaceholders(normalizedGenerated)) return false;
-  if (!normalizedGenerated.includes(month)) return false;
+  if (!normalizedGenerated) return { ok: false, reason: "Ollama output was empty after trimming." };
+  if (normalizedGenerated === normalizeTemplate(template)) {
+    return { ok: false, reason: "Ollama output matched the monthly template without filling it in." };
+  }
+  if (hasTemplatePlaceholders(normalizedGenerated)) {
+    return { ok: false, reason: "Ollama output still contains template placeholders." };
+  }
+  if (!normalizedGenerated.includes(month)) {
+    return { ok: false, reason: `Ollama output did not include the target month ${month}.` };
+  }
   for (const section of getMonthlyStructure(config).sections.filter((item) => item.required !== false)) {
     if (!normalizedGenerated.split("\n").some((line) => normalizeHeadingLabel(line) === normalizeHeadingLabel(section.label))) {
-      return false;
+      return { ok: false, reason: `Ollama output is missing required monthly heading: ${section.label}.` };
     }
   }
   if (
     expected.hasWeeklyInputs &&
     !hasSubstantiveSectionContent(extractManagedSection(normalizedGenerated, labels, findPeriodSection(config, "monthly", "top_outcomes")!.label))
   ) {
-    return false;
+    return { ok: false, reason: "Top Outcomes was empty even though weekly inputs existed." };
   }
-  return true;
+  return { ok: true, reason: "Output passed monthly validation." };
 }
 
 async function loadWeeklyInputsForMonth(
@@ -545,7 +640,8 @@ export async function generateWeeklyDraft(
   cwd: string,
   config: AppConfig,
   fridayIso: string,
-  mondayIso: string
+  mondayIso: string,
+  options: GenerateDraftOptions = {}
 ): Promise<{ outputPath: string; warnings: string[] }> {
   const warnings: string[] = [];
   const styleInstruction = await resolveStyleInstruction(cwd, config, warnings, "Facts only. No hype. No assumptions.");
@@ -600,25 +696,41 @@ export async function generateWeeklyDraft(
     next_week_tasks: nextWeekMd
   };
   const renderedWeeklyScaffold = renderWeeklyFallback(template, config, fridayIso, weeklySectionValues);
+  const systemPrompt = "You are a strict formatter. Output only valid markdown using the provided template format.";
+  const debug: DebugPayload = {
+    enabled: options.debug ?? false,
+    systemPrompt,
+    prompt,
+    validation: {
+      ok: false,
+      reason: "Generation did not complete."
+    },
+    usedFallback: false
+  };
 
   let content = renderWeeklyFallback(template, config, fridayIso, weeklySectionValues);
   try {
-    const generated = await generateWithOllama(
-      config,
-      "You are a strict formatter. Output only valid markdown using the provided template format.",
-      prompt
-    );
-    if (isValidWeeklyOllamaOutput(config, template, generated, fridayIso, weeklyContent)) {
+    const generated = await generateWithOllama(config, systemPrompt, prompt);
+    debug.rawResponse = generated;
+    const validation = validateWeeklyOllamaOutput(config, template, generated, fridayIso, weeklyContent);
+    debug.validation = validation;
+    if (validation.ok) {
       content = applyManagedSectionsFromScaffold(generated, renderedWeeklyScaffold, weeklySections);
     } else {
+      debug.usedFallback = true;
       warnings.push("Ollama output did not match expected format; used deterministic fallback.");
     }
   } catch (error) {
+    debug.usedFallback = true;
+    debug.validation = { ok: false, reason: "Ollama generation failed before validation." };
+    debug.error = String(error);
     warnings.push(`Ollama unavailable or failed; used deterministic fallback. ${String(error)}`);
   }
 
   const outputPath = path.resolve(cwd, config.paths.drafts_dir, "weekly", weeklyFileName(fridayIso));
-  await writeText(outputPath, content.trimEnd() + "\n");
+  const debugBlock = renderDebugBlock(debug);
+  const finalContent = debug.enabled ? `${content.trimEnd()}\n\n${debugBlock}\n` : `${content.trimEnd()}\n`;
+  await writeText(outputPath, finalContent);
   return { outputPath, warnings };
 }
 
@@ -709,7 +821,8 @@ export async function exportWeeklyPrompt(
 export async function generateMonthlyDraft(
   cwd: string,
   config: AppConfig,
-  month: string
+  month: string,
+  options: GenerateDraftOptions = {}
 ): Promise<{ outputPath: string; warnings: string[] }> {
   const warnings: string[] = [];
   const styleInstruction = await resolveStyleInstruction(cwd, config, warnings, "Facts only. Do not invent outcomes.");
@@ -735,26 +848,44 @@ export async function generateMonthlyDraft(
     "",
     renderRememberBlock(config, "Generate the monthly summary now as markdown.")
   ].join("\n");
+  const systemPrompt = "You are a strict formatter. Output only valid markdown using the provided template format.";
+  const debug: DebugPayload = {
+    enabled: options.debug ?? false,
+    systemPrompt,
+    prompt,
+    validation: {
+      ok: false,
+      reason: "Generation did not complete."
+    },
+    usedFallback: false
+  };
 
   let content = renderedMonthlyScaffold;
 
   try {
-    const generated = await generateWithOllama(
-      config,
-      "You are a strict formatter. Output only valid markdown using the provided template format.",
-      prompt
-    );
-    if (isValidMonthlyOllamaOutput(config, template, generated, month, { hasWeeklyInputs: weeklyInputs.length > 0 })) {
+    const generated = await generateWithOllama(config, systemPrompt, prompt);
+    debug.rawResponse = generated;
+    const validation = validateMonthlyOllamaOutput(config, template, generated, month, {
+      hasWeeklyInputs: weeklyInputs.length > 0
+    });
+    debug.validation = validation;
+    if (validation.ok) {
       content = applyManagedSectionsFromScaffold(generated, renderedMonthlyScaffold, getMonthlyStructure(config).sections);
     } else {
+      debug.usedFallback = true;
       warnings.push("Ollama output did not match expected monthly format; used fallback template.");
     }
   } catch (error) {
+    debug.usedFallback = true;
+    debug.validation = { ok: false, reason: "Ollama generation failed before validation." };
+    debug.error = String(error);
     warnings.push(`Ollama unavailable or failed; used fallback template. ${String(error)}`);
   }
 
   const outputPath = path.resolve(cwd, config.paths.drafts_dir, "monthly", monthFileName(month));
-  await writeText(outputPath, content.trimEnd() + "\n");
+  const debugBlock = renderDebugBlock(debug);
+  const finalContent = debug.enabled ? `${content.trimEnd()}\n\n${debugBlock}\n` : `${content.trimEnd()}\n`;
+  await writeText(outputPath, finalContent);
   return { outputPath, warnings };
 }
 

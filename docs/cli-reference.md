@@ -44,8 +44,10 @@ Use `generate dailies` when you want a Monday through Friday set derived from a 
 
 ### Weekly And Monthly Draft Generation
 - `worklog generate weekly --friday YYYY-MM-DD`
+- `worklog generate weekly --friday YYYY-MM-DD --debug`
 - `worklog generate weekly --friday YYYY-MM-DD --export-prompt`
 - `worklog generate monthly --month YYYY-MM`
+- `worklog generate monthly --month YYYY-MM --debug`
 - `worklog generate monthly --month YYYY-MM --export-prompt`
 
 ### Attendance Reports
@@ -78,6 +80,15 @@ Output locations:
 
 - Weekly prompt package: `drafts/prompts/weekly/YYYY-MM-DD-weekly-prompt.md`
 - Monthly prompt package: `drafts/prompts/monthly/YYYY-MM-monthly-prompt.md`
+
+## Debug Generation
+Use `--debug` on weekly or monthly generation when you want the draft file to include:
+
+- the exact system prompt and assembled user prompt sent to Ollama
+- the raw Ollama response before fallback handling
+- a validation summary showing whether the response was accepted or fallback was used
+
+Debug details are appended to the generated draft after the normal markdown content.
 
 ## Approval Behavior
 Approving a draft:

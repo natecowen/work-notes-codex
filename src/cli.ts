@@ -121,13 +121,14 @@ generate
   .command("weekly")
   .requiredOption("--friday <YYYY-MM-DD>", "Friday date of the target week")
   .option("--export-prompt", "Write an external-LLM prompt package instead of generating with Ollama", false)
-  .action(async (opts: { friday: string; exportPrompt: boolean }) => {
+  .option("--debug", "Append prompt/response debug details to the generated draft", false)
+  .action(async (opts: { friday: string; exportPrompt: boolean; debug: boolean }) => {
     const cwd = process.cwd();
     const config = await loadConfig(cwd);
     const week = resolveWeekWindowFromFriday(opts.friday);
     const result = opts.exportPrompt
       ? await exportWeeklyPrompt(cwd, config, week.friday, week.monday)
-      : await generateWeeklyDraft(cwd, config, week.friday, week.monday);
+      : await generateWeeklyDraft(cwd, config, week.friday, week.monday, { debug: opts.debug });
     console.log(
       `${opts.exportPrompt ? "Weekly prompt package" : "Weekly draft"}: ${path.relative(cwd, result.outputPath)}`
     );
@@ -141,12 +142,13 @@ generate
   .command("monthly")
   .requiredOption("--month <YYYY-MM>", "Month key")
   .option("--export-prompt", "Write an external-LLM prompt package instead of generating with Ollama", false)
-  .action(async (opts: { month: string; exportPrompt: boolean }) => {
+  .option("--debug", "Append prompt/response debug details to the generated draft", false)
+  .action(async (opts: { month: string; exportPrompt: boolean; debug: boolean }) => {
     const cwd = process.cwd();
     const config = await loadConfig(cwd);
     const result = opts.exportPrompt
       ? await exportMonthlyPrompt(cwd, config, opts.month)
-      : await generateMonthlyDraft(cwd, config, opts.month);
+      : await generateMonthlyDraft(cwd, config, opts.month, { debug: opts.debug });
     console.log(
       `${opts.exportPrompt ? "Monthly prompt package" : "Monthly draft"}: ${path.relative(cwd, result.outputPath)}`
     );
