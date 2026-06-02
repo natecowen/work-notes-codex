@@ -6,8 +6,17 @@ import path from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 import { writeText } from "./files.js";
-import { generateMonthlyDraft, generateWeeklyDraft, isValidMonthlyOllamaOutput, isValidWeeklyOllamaOutput } from "./generate.js";
-import type { AppConfig } from "../types.js";
+import { monthFolderName, weeklyFileName } from "./dates.js";
+import {
+  deriveOpenTaskCandidates,
+  exportMonthlyPrompt,
+  exportWeeklyPrompt,
+  generateMonthlyNote,
+  generateWeeklyNote,
+  isValidMonthlyOllamaOutput,
+  isValidWeeklyOllamaOutput
+} from "./generate.js";
+import type { AppConfig, DailyEntry } from "../types.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -85,7 +94,6 @@ function testConfig(): AppConfig {
       style_profile_from_samples: false
     },
     prompting: {
-      sample_writing_limit: 2,
       remember_rules: ["Be factual."]
     },
     categories: ["Development"],
@@ -132,6 +140,42 @@ async function createWorkspace(): Promise<string> {
   return mkdtemp(path.join(os.tmpdir(), "work-notes-codex-"));
 }
 
+function dailyFixturePath(cwd: string, date: string): string {
+  return path.join(cwd, "daily", date.slice(0, 4), monthFolderName(date), `${date}.md`);
+}
+
+function weeklyFixturePath(cwd: string, friday: string): string {
+  return path.join(cwd, "weekly", friday.slice(0, 4), weeklyFileName(friday));
+}
+
+function taskEntry(date: string, tasksOpen: string[], tasksDone: string[]): DailyEntry {
+  return {
+    date,
+    attendance: "office",
+    meetings: [],
+    workLines: [],
+    workCategories: [],
+    notesLines: [],
+    tasksOpen,
+    tasksDone,
+    tags: [],
+    approved: false,
+    rawBody: "",
+    sourcePath: `${date}.md`
+  };
+}
+
+test("open task candidates use last-status-wins normalization", () => {
+  const candidates = deriveOpenTaskCandidates([
+    taskEntry("2026-03-16", ["Follow up with infra.", "Create Jira story"], []),
+    taskEntry("2026-03-17", [], ["follow up with infra"]),
+    taskEntry("2026-03-18", ["Follow up with infra"], []),
+    taskEntry("2026-03-20", [], ["Create Jira story."])
+  ]);
+
+  assert.deepEqual(candidates, [{ text: "Follow up with infra", lastSeen: "2026-03-18" }]);
+});
+
 async function writeCliFixtureConfig(cwd: string): Promise<void> {
   await writeText(
     path.join(cwd, "config", "config.yaml"),
@@ -154,7 +198,6 @@ voice:
   mode: facts_only
   style_profile_from_samples: false
 prompting:
-  sample_writing_limit: 2
   remember_rules:
     - Be factual.
 categories:
@@ -274,7 +317,7 @@ monthly:
 }
 
 async function writeDailyNote(cwd: string, date: string, attendance = "office"): Promise<void> {
-  const filePath = path.join(cwd, "daily", date.slice(0, 4), `${date}.md`);
+  const filePath = dailyFixturePath(cwd, date);
   await writeText(
     filePath,
     `---
@@ -295,6 +338,147 @@ Notes:
 `
   );
 }
+
+async function execCli(cwd: string, args: string[]) {
+  return execFileAsync(
+    process.execPath,
+    [
+      "--import",
+      path.resolve(process.cwd(), "node_modules", "tsx", "dist", "loader.mjs"),
+      path.resolve(process.cwd(), "src/cli.ts"),
+      ...args
+    ],
+    {
+      cwd,
+      env: {
+        ...process.env,
+        WORKLOG_OLLAMA_ENDPOINT: "http://127.0.0.1:1/api/generate"
+      }
+    }
+  );
+}
+
+test("weekly prompt export combines dailies into one normalized input", async () => {
+  const cwd = await createWorkspace();
+  const config = testConfig();
+  await writeText(path.join(cwd, "templates", "weekly.md"), weeklyTemplate);
+
+  await writeText(
+    dailyFixturePath(cwd, "2026-03-16"),
+    `---
+date: 2026-03-16
+attendance: office
+approved: false
+---
+
+## Meetings:
+- Platform sync with SRE.
+
+## Work:
+### DevOps:
+- Fixed a noisy deploy alert in staging.
+
+## Notes:
+- Restored missing environment variable validation.
+
+## Task list for tomorrow:
+- [ ] Finish CI setup
+`
+  );
+
+  await writeText(
+    dailyFixturePath(cwd, "2026-03-20"),
+    `---
+date: 2026-03-20
+attendance: wfh
+approved: false
+---
+
+## Meetings:
+- Friday release go/no-go.
+
+## Work:
+### Development/Coding:
+- Shipped the rollout dashboard.
+
+## Notes:
+- Release completed without the earlier migration delay.
+
+## Task list for tomorrow:
+- [ ] Revisit alert thresholds
+`
+  );
+
+  const result = await exportWeeklyPrompt(cwd, config, "2026-03-20", "2026-03-16");
+  const output = await readFile(result.outputPath, "utf8");
+
+  assert.match(output, /## Combined Daily Notes/);
+  assert.match(output, /Dates included:\n- 2026-03-16\n- 2026-03-20/);
+  assert.match(output, /Attendance rollup:\n- Office: 1\n- WFH: 1/);
+  assert.match(output, /\*\*Development\/Coding:\*\*\n- Shipped the rollout dashboard/);
+  assert.match(output, /\*\*DevOps:\*\*\n- Fixed a noisy deploy alert in staging/);
+  assert.doesNotMatch(output, /Finish CI setup/);
+  assert.doesNotMatch(output, /Revisit alert thresholds/);
+  assert.doesNotMatch(output, /# Task Review/);
+  assert.doesNotMatch(output, /## Source Daily Notes/);
+  assert.doesNotMatch(output, /## Sample Writing/);
+  assert.doesNotMatch(output, /Path: daily\/2026\/2026-03-16\.md/);
+  assert.doesNotMatch(output, /```md\n---\ndate: 2026-03-16/);
+});
+
+test("monthly prompt export combines weeklies into one normalized input", async () => {
+  const cwd = await createWorkspace();
+  const config = testConfig();
+  await writeText(path.join(cwd, "templates", "monthly.md"), monthlyTemplate);
+  await writeText(
+    weeklyFixturePath(cwd, "2026-03-20"),
+    `---
+week_friday: 2026-03-20
+approved: true
+---
+
+# Week of: 2026-03-20
+
+Task list from last Week:
+- Follow up with infra
+
+Work (Facts Only):
+Key outcomes shipped/delivered:
+**Development/Coding:**
+- Delivered reporting updates.
+
+Problems solved / fires prevented:
+- Resolved flaky deploy.
+
+Cross-team impact:
+- Unblocked another team.
+
+Attendance Summary:
+- Office: 5
+
+Task list for Next Week (Max 3)
+- Stabilize rollouts
+
+# Task Review
+
+Open task candidates from daily notes (last status wins):
+- Clean up appendix leak (last open: 2026-03-20)
+`
+  );
+
+  const result = await exportMonthlyPrompt(cwd, config, "2026-03");
+  const output = await readFile(result.outputPath, "utf8");
+
+  assert.match(output, /## Combined Weekly Summaries/);
+  assert.match(output, /Source weekly files:\n- weekly\/2026\/2026-03-20-W12\.md/);
+  assert.match(output, /1\. Top Outcomes:\n- Delivered reporting updates\./);
+  assert.match(output, /2\. Problems Solved \/ Fires Prevented:\n- Resolved flaky deploy\./);
+  assert.match(output, /3\. Cross-Team Impact & Leadership:\n- Unblocked another team\./);
+  assert.doesNotMatch(output, /## Source Weekly Notes/);
+  assert.doesNotMatch(output, /## Sample Writing/);
+  assert.doesNotMatch(output, /# Week of: 2026-03-20/);
+  assert.doesNotMatch(output, /```md\n---\nweek_friday: 2026-03-20/);
+});
 
 function expectedWeeklyContent(
   overrides: Partial<{
@@ -628,13 +812,13 @@ Task list for Next Week (Max 3)
   );
 });
 
-test("weekly draft separates carry-forward tasks from next-week tasks in fallback content", async () => {
+test("weekly note keeps task sections manual and appends task review candidates", async () => {
   const cwd = await createWorkspace();
   const config = testConfig();
   await writeText(path.join(cwd, "templates", "weekly.md"), weeklyTemplate);
 
   await writeText(
-    path.join(cwd, "daily", "2026", "2026-03-16.md"),
+    dailyFixturePath(cwd, "2026-03-16"),
     `---
 date: 2026-03-16
 attendance: office
@@ -658,7 +842,7 @@ approved: false
   );
 
   await writeText(
-    path.join(cwd, "daily", "2026", "2026-03-20.md"),
+    dailyFixturePath(cwd, "2026-03-20"),
     `---
 date: 2026-03-20
 attendance: office
@@ -692,16 +876,17 @@ approved: false
     });
 
   try {
-    const result = await generateWeeklyDraft(cwd, config, "2026-03-20", "2026-03-16");
+    const result = await generateWeeklyNote(cwd, config, "2026-03-20", "2026-03-16");
     const output = await readFile(result.outputPath, "utf8");
 
     assert.match(result.warnings.join("\n"), /used deterministic fallback/i);
-    assert.match(output, /Task list from last Week:\n- Finish CI runner cleanup steps\n- Draft summary of alert tuning changes/);
-    assert.match(
-      output,
-      /Task list for Next Week \(Max 3\)\n- Expand config validation to more shared services\n- Revisit alert thresholds after one week of signal data/
-    );
-    assert.doesNotMatch(output, /Task list from last Week:\n- Expand config validation to more shared services/);
+    assert.match(output, /Task list from last Week:\n- Manual review required\./);
+    assert.match(output, /Task list for Next Week \(Max 3\)\n- Manual review required\./);
+    assert.match(output, /# Task Review/);
+    assert.match(output, /- Finish CI runner cleanup steps \(last open: 2026-03-16\)/);
+    assert.match(output, /- Draft summary of alert tuning changes \(last open: 2026-03-16\)/);
+    assert.match(output, /- Expand config validation to more shared services \(last open: 2026-03-20\)/);
+    assert.match(output, /- Revisit alert thresholds after one week of signal data \(last open: 2026-03-20\)/);
     assert.match(output, /Cross-team impact:\n- Platform sync with SRE on alert fatigue reduction\./);
     assert.doesNotMatch(output, /Cross-team impact:\n- Met with Platform sync/);
     assert.match(output, /Problems solved \/ fires prevented:/);
@@ -716,13 +901,13 @@ approved: false
   }
 });
 
-test("weekly draft does not treat mid-week tasks as carry-forward when Monday is missing", async () => {
+test("weekly note does not treat mid-week tasks as carry-forward when Monday is missing", async () => {
   const cwd = await createWorkspace();
   const config = testConfig();
   await writeText(path.join(cwd, "templates", "weekly.md"), weeklyTemplate);
 
   await writeText(
-    path.join(cwd, "daily", "2026", "2026-03-18.md"),
+    dailyFixturePath(cwd, "2026-03-18"),
     `---
 date: 2026-03-18
 attendance: office
@@ -745,7 +930,7 @@ approved: false
   );
 
   await writeText(
-    path.join(cwd, "daily", "2026", "2026-03-20.md"),
+    dailyFixturePath(cwd, "2026-03-20"),
     `---
 date: 2026-03-20
 attendance: office
@@ -775,26 +960,28 @@ approved: false
     });
 
   try {
-    const result = await generateWeeklyDraft(cwd, config, "2026-03-20", "2026-03-16");
+    const result = await generateWeeklyNote(cwd, config, "2026-03-20", "2026-03-16");
     const output = await readFile(result.outputPath, "utf8");
 
     assert.match(result.warnings.join("\n"), /Missing daily files: 2026-03-16, 2026-03-17, 2026-03-19/);
-    assert.match(output, /Task list from last Week:\n- None captured/);
+    assert.match(output, /Task list from last Week:\n- Manual review required\./);
     assert.doesNotMatch(output, /Task list from last Week:\n- Draft rollout follow-up/);
-    assert.match(output, /Task list for Next Week \(Max 3\)\n- Plan the next tuning pass/);
+    assert.match(output, /Task list for Next Week \(Max 3\)\n- Manual review required\./);
+    assert.match(output, /- Draft rollout follow-up \(last open: 2026-03-18\)/);
+    assert.match(output, /- Plan the next tuning pass \(last open: 2026-03-20\)/);
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-test("weekly draft falls back when Ollama echoes the template", async () => {
+test("weekly note falls back when Ollama echoes the template", async () => {
   const cwd = await createWorkspace();
   const config = testConfig();
   await writeText(path.join(cwd, "templates", "weekly.md"), weeklyTemplate);
 
   for (const date of ["2026-03-16", "2026-03-17", "2026-03-18", "2026-03-19", "2026-03-20"]) {
     await writeText(
-      path.join(cwd, "daily", date.slice(0, 4), `${date}.md`),
+      dailyFixturePath(cwd, date),
       `---
 date: ${date}
 attendance: office
@@ -829,11 +1016,11 @@ approved: false
     });
 
   try {
-    const result = await generateWeeklyDraft(cwd, config, "2026-03-20", "2026-03-16");
+    const result = await generateWeeklyNote(cwd, config, "2026-03-20", "2026-03-16");
     const output = await readFile(result.outputPath, "utf8");
 
     assert.match(result.warnings.join("\n"), /used deterministic fallback/i);
-    assert.match(output, /week_friday: 2026-03-20/);
+    assert.match(output, /week_friday: '?2026-03-20'?/);
     assert.doesNotMatch(output, /{{FRIDAY}}/);
     assert.match(output, /Attendance Summary:/);
     assert.match(output, /\*\*Development\/Coding:\*\*/);
@@ -843,12 +1030,34 @@ approved: false
   }
 });
 
-test("weekly draft preserves categorized key outcomes in final output", async () => {
+test("weekly note keeps accepted LLM summary sections and deterministic task sections", async () => {
   const cwd = await createWorkspace();
   const config = testConfig();
   await writeText(path.join(cwd, "templates", "weekly.md"), weeklyTemplate);
   await writeText(
-    path.join(cwd, "daily", "2026", "2026-03-20.md"),
+    dailyFixturePath(cwd, "2026-03-16"),
+    `---
+date: 2026-03-16
+attendance: office
+approved: false
+---
+
+## Meetings:
+- Sprint planning
+
+## Work:
+### DevOps:
+- Prepared rollout guardrails.
+
+## Notes:
+- Started the deployment follow-up list.
+
+## Task list for tomorrow:
+- [ ] Finish CI setup
+`
+  );
+  await writeText(
+    dailyFixturePath(cwd, "2026-03-20"),
     `---
 date: 2026-03-20
 attendance: office
@@ -882,11 +1091,11 @@ approved: false
 # Week of: 2026-03-20
 
 Task list from last Week:
-- Create Jira stories
+- Finish CI setup
 
 Work (Facts Only):
 Key outcomes shipped/delivered:
-- Generic summary from model
+- Summarized Branch consumer cleanup and Quartz/Calc deployment work.
 
 Problems solved / fires prevented:
 - Fixed app startup logging visibility.
@@ -913,28 +1122,30 @@ Task list for Next Week (Max 3)
     });
 
   try {
-    const result = await generateWeeklyDraft(cwd, config, "2026-03-20", "2026-03-16");
+    const result = await generateWeeklyNote(cwd, config, "2026-03-20", "2026-03-16");
     const output = await readFile(result.outputPath, "utf8");
 
     assert.equal(result.warnings.length, 1);
-    assert.match(result.warnings[0], /Missing daily files: 2026-03-16, 2026-03-17, 2026-03-18, 2026-03-19/);
-    assert.match(output, /\*\*Development\/Coding:\*\*/);
-    assert.match(output, /- Removed unused seasonal overrides from Branch consumer\./);
-    assert.match(output, /- Validated and deployed Quartz and Calc consumer changes\./);
-    assert.match(output, /\*\*DevOps:\*\*/);
-    assert.match(output, /- Fixed app startup logging visibility\./);
-    assert.doesNotMatch(output, /- Generic summary from model/);
+    assert.match(result.warnings[0], /Missing daily files: 2026-03-17, 2026-03-18, 2026-03-19/);
+    assert.match(output, /- Summarized Branch consumer cleanup and Quartz\/Calc deployment work\./);
+    assert.match(output, /Task list from last Week:\n- Manual review required\./);
+    assert.match(output, /Attendance Summary:\n- Office: 2\n- WFH: 0/);
+    assert.match(output, /Task list for Next Week \(Max 3\)\n- Manual review required\./);
+    assert.match(output, /- Finish CI setup \(last open: 2026-03-16\)/);
+    assert.match(output, /- Create Jira stories \(last open: 2026-03-20\)/);
+    assert.doesNotMatch(output, /\*\*Development\/Coding:\*\*/);
+    assert.doesNotMatch(output, /- Removed unused seasonal overrides from Branch consumer\./);
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-test("weekly draft does not treat technical notes with bare `with` as cross-team impact", async () => {
+test("weekly note does not treat technical notes with bare `with` as cross-team impact", async () => {
   const cwd = await createWorkspace();
   const config = testConfig();
   await writeText(path.join(cwd, "templates", "weekly.md"), weeklyTemplate);
   await writeText(
-    path.join(cwd, "daily", "2026", "2026-03-20.md"),
+    dailyFixturePath(cwd, "2026-03-20"),
     `---
 date: 2026-03-20
 attendance: office
@@ -964,7 +1175,7 @@ approved: false
     });
 
   try {
-    const result = await generateWeeklyDraft(cwd, config, "2026-03-20", "2026-03-16");
+    const result = await generateWeeklyNote(cwd, config, "2026-03-20", "2026-03-16");
     const output = await readFile(result.outputPath, "utf8");
 
     assert.match(result.warnings.join("\n"), /used deterministic fallback/i);
@@ -974,12 +1185,12 @@ approved: false
   }
 });
 
-test("weekly draft does not carry markdown category headings through as outcome bullets", async () => {
+test("weekly note keeps concise outcome wording without raw markdown category headings", async () => {
   const cwd = await createWorkspace();
   const config = testConfig();
   await writeText(path.join(cwd, "templates", "weekly.md"), weeklyTemplate);
   await writeText(
-    path.join(cwd, "daily", "2026", "2026-03-20.md"),
+    dailyFixturePath(cwd, "2026-03-20"),
     `---
 date: 2026-03-20
 attendance: office
@@ -1019,7 +1230,7 @@ Task list from last Week:
 
 Work (Facts Only):
 Key outcomes shipped/delivered:
-- Placeholder from model
+- Condensed Branch cleanup, AAR planning, and mentoring work into one weekly outcome.
 
 Problems solved / fires prevented:
 - Supported the sprint.
@@ -1046,13 +1257,14 @@ Task list for Next Week (Max 3)
     });
 
   try {
-    const result = await generateWeeklyDraft(cwd, config, "2026-03-20", "2026-03-16");
+    const result = await generateWeeklyNote(cwd, config, "2026-03-20", "2026-03-16");
     const output = await readFile(result.outputPath, "utf8");
 
     assert.equal(result.warnings.length, 1);
-    assert.match(output, /\*\*Development\/Coding:\*\*/);
-    assert.match(output, /\*\*Architecture:\*\*/);
-    assert.match(output, /\*\*Leadership\/Mentoring:\*\*/);
+    assert.match(output, /- Condensed Branch cleanup, AAR planning, and mentoring work into one weekly outcome\./);
+    assert.doesNotMatch(output, /\*\*Development\/Coding:\*\*/);
+    assert.doesNotMatch(output, /\*\*Architecture:\*\*/);
+    assert.doesNotMatch(output, /\*\*Leadership\/Mentoring:\*\*/);
     assert.doesNotMatch(output, /^### /m);
     assert.doesNotMatch(output, /- ### /);
   } finally {
@@ -1060,12 +1272,12 @@ Task list for Next Week (Max 3)
   }
 });
 
-test("weekly draft preserves non-managed template headings after successful Ollama output", async () => {
+test("weekly note preserves non-managed template headings after successful Ollama output", async () => {
   const cwd = await createWorkspace();
   const config = testConfig();
   await writeText(path.join(cwd, "templates", "weekly.md"), weeklyTemplate);
   await writeText(
-    path.join(cwd, "daily", "2026", "2026-03-20.md"),
+    dailyFixturePath(cwd, "2026-03-20"),
     `---
 date: 2026-03-20
 attendance: office
@@ -1123,7 +1335,7 @@ Task list for Next Week (Max 3)
     });
 
   try {
-    const result = await generateWeeklyDraft(cwd, config, "2026-03-20", "2026-03-16");
+    const result = await generateWeeklyNote(cwd, config, "2026-03-20", "2026-03-16");
     const output = await readFile(result.outputPath, "utf8");
 
     assert.equal(result.warnings.length, 1);
@@ -1143,7 +1355,7 @@ test("weekly debug appends accepted validation details and raw response", async 
   const config = testConfig();
   await writeText(path.join(cwd, "templates", "weekly.md"), weeklyTemplate);
   await writeText(
-    path.join(cwd, "daily", "2026", "2026-03-20.md"),
+    dailyFixturePath(cwd, "2026-03-20"),
     `---
 date: 2026-03-20
 attendance: office
@@ -1207,7 +1419,7 @@ Task list for Next Week (Max 3)
     });
 
   try {
-    const result = await generateWeeklyDraft(cwd, config, "2026-03-20", "2026-03-16", { debug: true });
+    const result = await generateWeeklyNote(cwd, config, "2026-03-20", "2026-03-16", { debug: true });
     const output = await readFile(result.outputPath, "utf8");
 
     assert.match(output, /# Debug/);
@@ -1225,7 +1437,7 @@ test("weekly debug appends rejection reason when fallback is used", async () => 
   const config = testConfig();
   await writeText(path.join(cwd, "templates", "weekly.md"), weeklyTemplate);
   await writeText(
-    path.join(cwd, "daily", "2026", "2026-03-20.md"),
+    dailyFixturePath(cwd, "2026-03-20"),
     `---
 date: 2026-03-20
 attendance: office
@@ -1255,7 +1467,7 @@ approved: false
     });
 
   try {
-    const result = await generateWeeklyDraft(cwd, config, "2026-03-20", "2026-03-16", { debug: true });
+    const result = await generateWeeklyNote(cwd, config, "2026-03-20", "2026-03-16", { debug: true });
     const output = await readFile(result.outputPath, "utf8");
 
     assert.match(result.warnings.join("\n"), /used deterministic fallback/i);
@@ -1271,7 +1483,7 @@ test("weekly debug appends Ollama error details when generation throws", async (
   const config = testConfig();
   await writeText(path.join(cwd, "templates", "weekly.md"), weeklyTemplate);
   await writeText(
-    path.join(cwd, "daily", "2026", "2026-03-20.md"),
+    dailyFixturePath(cwd, "2026-03-20"),
     `---
 date: 2026-03-20
 attendance: office
@@ -1299,7 +1511,7 @@ approved: false
   };
 
   try {
-    const result = await generateWeeklyDraft(cwd, config, "2026-03-20", "2026-03-16", { debug: true });
+    const result = await generateWeeklyNote(cwd, config, "2026-03-20", "2026-03-16", { debug: true });
     const output = await readFile(result.outputPath, "utf8");
 
     assert.match(result.warnings.join("\n"), /connection refused/);
@@ -1315,7 +1527,7 @@ test("monthly debug appends accepted validation details and raw response", async
   const config = testConfig();
   await writeText(path.join(cwd, "templates", "monthly.md"), monthlyTemplate);
   await writeText(
-    path.join(cwd, "weekly", "2026", "2026-03-06-ISOWeek.md"),
+    weeklyFixturePath(cwd, "2026-03-06"),
     `---
 week_friday: 2026-03-06
 approved: true
@@ -1375,7 +1587,7 @@ approved: false
     });
 
   try {
-    const result = await generateMonthlyDraft(cwd, config, "2026-03", { debug: true });
+    const result = await generateMonthlyNote(cwd, config, "2026-03", { debug: true });
     const output = await readFile(result.outputPath, "utf8");
 
     assert.match(output, /# Debug/);
@@ -1391,7 +1603,7 @@ test("monthly debug appends rejection reason when fallback is used", async () =>
   const config = testConfig();
   await writeText(path.join(cwd, "templates", "monthly.md"), monthlyTemplate);
   await writeText(
-    path.join(cwd, "weekly", "2026", "2026-03-06-ISOWeek.md"),
+    weeklyFixturePath(cwd, "2026-03-06"),
     `---
 week_friday: 2026-03-06
 approved: true
@@ -1428,7 +1640,7 @@ Task list for Next Week (Max 3)
     });
 
   try {
-    const result = await generateMonthlyDraft(cwd, config, "2026-03", { debug: true });
+    const result = await generateMonthlyNote(cwd, config, "2026-03", { debug: true });
     const output = await readFile(result.outputPath, "utf8");
 
     assert.match(result.warnings.join("\n"), /used fallback template/i);
@@ -1439,11 +1651,11 @@ Task list for Next Week (Max 3)
   }
 });
 
-test("cli weekly --debug appends debug details to the generated draft", async () => {
+test("cli generate weekly only writes an exported prompt package", async () => {
   const cwd = await createWorkspace();
   await writeCliFixtureConfig(cwd);
   await writeText(
-    path.join(cwd, "daily", "2026", "2026-03-20.md"),
+    dailyFixturePath(cwd, "2026-03-20"),
     `---
 date: 2026-03-20
 attendance: office
@@ -1465,38 +1677,158 @@ approved: false
 `
   );
 
-  await execFileAsync(
-    process.execPath,
-    [
-      "--import",
-      path.resolve(process.cwd(), "node_modules", "tsx", "dist", "loader.mjs"),
-      path.resolve(process.cwd(), "src/cli.ts"),
-      "generate",
-      "weekly",
-      "--friday",
-      "2026-03-20",
-      "--debug"
-    ],
-    {
-      cwd,
-      env: {
-        ...process.env,
-        WORKLOG_OLLAMA_ENDPOINT: "http://127.0.0.1:1/api/generate"
-      }
-    }
-  );
+  await assert.rejects(() => execCli(cwd, ["generate", "weekly", "--friday", "2026-03-20"]), /only creates prompt packages/);
+  const result = await execCli(cwd, ["generate", "weekly", "--friday", "2026-03-20", "--export-prompt"]);
 
-  const output = await readFile(path.join(cwd, "drafts", "weekly", "2026-03-20-ISOWeek.md"), "utf8");
-  assert.match(output, /# Debug/);
-  assert.match(output, /## Validation\n- Accepted: no\n- Used fallback: yes/);
+  assert.match(result.stdout, /Weekly prompt package: drafts\/prompts\/weekly\/2026-03-20-weekly-prompt\.md/);
+  const output = await readFile(path.join(cwd, "drafts", "prompts", "weekly", "2026-03-20-weekly-prompt.md"), "utf8");
+  assert.match(output, /## Combined Daily Notes/);
+  assert.doesNotMatch(output, /# Task Review/);
 });
 
-test("weekly draft overwrites the final managed section with deterministic content", async () => {
+test("cli generate monthly only writes an exported prompt package", async () => {
+  const cwd = await createWorkspace();
+  await writeCliFixtureConfig(cwd);
+  await writeText(
+    weeklyFixturePath(cwd, "2026-03-20"),
+    `---
+week_friday: 2026-03-20
+approved: false
+---
+
+# Week of: 2026-03-20
+
+Task list from last Week:
+- Manual review required.
+
+Work (Facts Only):
+Key outcomes shipped/delivered:
+- Delivered reporting updates.
+
+Problems solved / fires prevented:
+- Resolved flaky deploy.
+
+Cross-team impact:
+- Unblocked another team.
+
+Attendance Summary:
+- Office: 5
+
+Task list for Next Week (Max 3)
+- Manual review required.
+`
+  );
+
+  await assert.rejects(() => execCli(cwd, ["generate", "monthly", "--month", "2026-03"]), /only creates prompt packages/);
+  const result = await execCli(cwd, ["generate", "monthly", "--month", "2026-03", "--export-prompt"]);
+
+  assert.match(result.stdout, /Monthly prompt package: drafts\/prompts\/monthly\/2026-03-monthly-prompt\.md/);
+  const output = await readFile(path.join(cwd, "drafts", "prompts", "monthly", "2026-03-monthly-prompt.md"), "utf8");
+  assert.match(output, /## Combined Weekly Summaries/);
+});
+
+test("cli run weekly writes directly to notes and refuses accidental overwrite", async () => {
+  const cwd = await createWorkspace();
+  await writeCliFixtureConfig(cwd);
+  await writeText(path.join(cwd, "templates", "weekly.md"), weeklyTemplate.replace("approved: false", "approved: true"));
+  await writeText(
+    dailyFixturePath(cwd, "2026-03-20"),
+    `---
+date: 2026-03-20
+attendance: office
+approved: false
+---
+
+## Meetings:
+- Sprint
+
+## Work:
+### Development/Coding:
+- Removed unused seasonal overrides from Branch consumer.
+
+## Notes:
+- Supported the sprint.
+
+## Task list for tomorrow:
+- [ ] Create Jira stories
+`
+  );
+
+  const firstRun = await execCli(cwd, ["run", "weekly", "--friday", "2026-03-20"]);
+  assert.match(firstRun.stdout, /Weekly note: weekly\/2026\/2026-03-20-W12\.md/);
+
+  const notePath = weeklyFixturePath(cwd, "2026-03-20");
+  const output = await readFile(notePath, "utf8");
+  assert.match(output, /approved: false/);
+  assert.match(output, /Task list from last Week:\n- Manual review required\./);
+  assert.match(output, /Task list for Next Week \(Max 3\)\n- Manual review required\./);
+  assert.match(output, /# Task Review/);
+  assert.match(output, /- Create Jira stories \(last open: 2026-03-20\)/);
+
+  await assert.rejects(() => execCli(cwd, ["run", "weekly", "--friday", "2026-03-20"]), /Output already exists/);
+  await execCli(cwd, ["run", "weekly", "--friday", "2026-03-20", "--overwrite"]);
+});
+
+test("cli run monthly writes directly to notes and ignores weekly task review appendices", async () => {
+  const cwd = await createWorkspace();
+  await writeCliFixtureConfig(cwd);
+  await writeText(path.join(cwd, "templates", "monthly.md"), monthlyTemplate.replace("approved: false", "approved: true"));
+  await writeText(
+    weeklyFixturePath(cwd, "2026-03-20"),
+    `---
+week_friday: 2026-03-20
+approved: false
+---
+
+# Week of: 2026-03-20
+
+Task list from last Week:
+- Manual review required.
+
+Work (Facts Only):
+Key outcomes shipped/delivered:
+- Delivered reporting updates.
+
+Problems solved / fires prevented:
+- Resolved flaky deploy.
+
+Cross-team impact:
+- Unblocked another team.
+
+Attendance Summary:
+- Office: 5
+
+Task list for Next Week (Max 3)
+- Manual review required.
+
+# Task Review
+
+Open task candidates from daily notes (last status wins):
+- Stabilize rollouts (last open: 2026-03-20)
+`
+  );
+
+  const firstRun = await execCli(cwd, ["run", "monthly", "--month", "2026-03"]);
+  assert.match(firstRun.stdout, /Monthly note: monthly\/2026\/2026-03-Monthly\.md/);
+
+  const notePath = path.join(cwd, "monthly", "2026", "2026-03-Monthly.md");
+  const output = await readFile(notePath, "utf8");
+  assert.match(output, /approved: false/);
+  assert.match(output, /1\. Top Outcomes:\n- Delivered reporting updates\./);
+  assert.match(output, /4\. Risks & Blockers\n- Manual review required\./);
+  assert.match(output, /5\. Next Month Focus\n- Manual review required\./);
+  assert.doesNotMatch(output, /Task Review|Stabilize rollouts|last open/);
+
+  await assert.rejects(() => execCli(cwd, ["run", "monthly", "--month", "2026-03"]), /Output already exists/);
+  await execCli(cwd, ["run", "monthly", "--month", "2026-03", "--overwrite"]);
+});
+
+test("weekly note overwrites the final managed section with deterministic content", async () => {
   const cwd = await createWorkspace();
   const config = testConfig();
   await writeText(path.join(cwd, "templates", "weekly.md"), weeklyTemplate);
   await writeText(
-    path.join(cwd, "daily", "2026", "2026-03-20.md"),
+    dailyFixturePath(cwd, "2026-03-20"),
     `---
 date: 2026-03-20
 attendance: office
@@ -1556,22 +1888,22 @@ Task list for Next Week (Max 3)
     });
 
   try {
-    const result = await generateWeeklyDraft(cwd, config, "2026-03-20", "2026-03-16");
+    const result = await generateWeeklyNote(cwd, config, "2026-03-20", "2026-03-16");
     const output = await readFile(result.outputPath, "utf8");
 
-    assert.match(output, /Task list for Next Week \(Max 3\)\n- Create Jira stories/);
+    assert.match(output, /Task list for Next Week \(Max 3\)\n- Manual review required\./);
     assert.doesNotMatch(output, /Hallucinated last section item/);
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-test("monthly draft falls back when Ollama echoes the template", async () => {
+test("monthly note falls back when Ollama echoes the template", async () => {
   const cwd = await createWorkspace();
   const config = testConfig();
   await writeText(path.join(cwd, "templates", "monthly.md"), monthlyTemplate);
   await writeText(
-    path.join(cwd, "weekly", "2026", "2026-03-20-ISOWeek.md"),
+    weeklyFixturePath(cwd, "2026-03-20"),
     `---
 week_friday: 2026-03-20
 approved: true
@@ -1608,7 +1940,7 @@ Task list for Next Week (Max 3)
     });
 
   try {
-    const result = await generateMonthlyDraft(cwd, config, "2026-03");
+    const result = await generateMonthlyNote(cwd, config, "2026-03");
     const output = await readFile(result.outputPath, "utf8");
 
     assert.match(result.warnings.join("\n"), /used fallback template/i);
@@ -1620,12 +1952,12 @@ Task list for Next Week (Max 3)
   }
 });
 
-test("monthly draft flattens weekly categorized outcomes into clean bullets", async () => {
+test("monthly note flattens weekly categorized outcomes into clean bullets", async () => {
   const cwd = await createWorkspace();
   const config = testConfig();
   await writeText(path.join(cwd, "templates", "monthly.md"), monthlyTemplate);
   await writeText(
-    path.join(cwd, "weekly", "2026", "2026-03-20-ISOWeek.md"),
+    weeklyFixturePath(cwd, "2026-03-20"),
     `---
 week_friday: 2026-03-20
 approved: true
@@ -1668,7 +2000,7 @@ Task list for Next Week (Max 3)
     });
 
   try {
-    const result = await generateMonthlyDraft(cwd, config, "2026-03");
+    const result = await generateMonthlyNote(cwd, config, "2026-03");
     const output = await readFile(result.outputPath, "utf8");
 
     assert.match(result.warnings.join("\n"), /used fallback template/i);
@@ -1677,20 +2009,21 @@ Task list for Next Week (Max 3)
     assert.match(output, /- Fixed app startup logging visibility\./);
     assert.match(output, /2\. Problems Solved \/ Fires Prevented\n- Resolved flaky deploy\./);
     assert.match(output, /3\. Cross-Team Impact & Leadership\n- Unblocked another team\./);
-    assert.match(output, /5\. Next Month Focus\n- Stabilize rollouts/);
+    assert.match(output, /5\. Next Month Focus\n- Manual review required\./);
     assert.doesNotMatch(output, /- \*\*/);
     assert.doesNotMatch(output, /- - /);
+    assert.doesNotMatch(output, /Task Review|appendix leak|last open/);
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-test("monthly draft preserves template spacing after successful Ollama output", async () => {
+test("monthly note preserves template spacing after successful Ollama output", async () => {
   const cwd = await createWorkspace();
   const config = testConfig();
   await writeText(path.join(cwd, "templates", "monthly.md"), monthlyTemplate);
   await writeText(
-    path.join(cwd, "weekly", "2026", "2026-03-20-ISOWeek.md"),
+    weeklyFixturePath(cwd, "2026-03-20"),
     `---
 week_friday: 2026-03-20
 approved: true
@@ -1746,7 +2079,7 @@ approved: false
     });
 
   try {
-    const result = await generateMonthlyDraft(cwd, config, "2026-03");
+    const result = await generateMonthlyNote(cwd, config, "2026-03");
     const output = await readFile(result.outputPath, "utf8");
 
     assert.equal(result.warnings.length, 0);

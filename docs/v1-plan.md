@@ -4,14 +4,14 @@
 - Runtime: TypeScript CLI (Node 20+)
 - LLM: Ollama local models
 - Source of truth: Markdown files
-- Daily files: one per date
-- Weekly filename: Friday date + `-ISOWeek.md`
+- Daily files: one per date under `notes/daily/YYYY/MM-MonthName/`
+- Weekly filename: Friday date + padded ISO week, e.g. `YYYY-MM-DD-W12.md`
 - Monthly filename: `YYYY-MM-Monthly.md`
 - Attendance: M-F only
 - Missing day handling: warn, do not fail
 - Monthly generation source: weekly markdown files
 - Categories: fixed
-- Approval: command + metadata
+- Preferred workflow: write weekly/monthly notes directly with `approved: false`
 
 ## Milestones
 1. Foundation
@@ -35,25 +35,25 @@
 - Resolve target week from Friday date.
 - Read Monday-Friday daily files.
 - Warn on missing days and continue.
-- Carry unfinished daily tasks into weekly "Tasks from Last Week".
-- Generate weekly draft in `drafts/weekly/`.
+- Leave weekly task sections manual and append deterministic `Task Review` candidates.
+- Generate weekly notes in `notes/weekly/`.
 
 5. Monthly Generator
 - Resolve month.
 - Read weekly files in month.
 - Build fixed-category monthly summary.
-- Generate draft in `drafts/monthly/`.
+- Leave risks and next-month focus manual.
+- Generate monthly notes in `notes/monthly/`.
 
 6. Attendance Reports
 - Weekly/monthly/custom range commands.
 - Aggregate counts by attendance type.
 - Output markdown report to `reports/attendance/`.
 
-7. Approval Workflow
-- `approve weekly` and `approve monthly` commands.
-- Set `approved: true` metadata.
-- Move approved drafts into `notes/`.
-- Write approval audit to cache index.
+7. Direct Note Workflow
+- `run weekly` and `run monthly` commands.
+- Set generated note metadata to `approved: false`.
+- Refuse to overwrite existing note files unless `--overwrite` is passed.
 
 8. Voice Tuning
 - Add style-profile builder from sample docs.
@@ -61,8 +61,8 @@
 - Add deterministic generation defaults.
 
 9. External LLM Prompt Export
-- Export weekly prompt packages containing daily source notes, sample writing, template, and instructions for another LLM.
-- Export monthly prompt packages containing weekly source notes, sample writing, template, and instructions for another LLM.
+- Export weekly prompt packages containing combined daily evidence, the template, and instructions for another LLM.
+- Export monthly prompt packages containing combined weekly evidence, the template, and instructions for another LLM.
 - Write prompt packages under `drafts/prompts/weekly/` and `drafts/prompts/monthly/`.
 - Support prompt export through CLI flags on weekly/monthly generation commands.
 
@@ -73,13 +73,13 @@
 - `worklog voice profile`
 - `worklog generate daily --date YYYY-MM-DD [--overwrite]`
 - `worklog generate dailies --friday YYYY-MM-DD [--overwrite]`
-- `worklog generate weekly --friday YYYY-MM-DD [--export-prompt]`
-- `worklog generate monthly --month YYYY-MM [--export-prompt]`
+- `worklog generate weekly --friday YYYY-MM-DD --export-prompt`
+- `worklog generate monthly --month YYYY-MM --export-prompt`
+- `worklog run weekly --friday YYYY-MM-DD [--overwrite]`
+- `worklog run monthly --month YYYY-MM [--overwrite]`
 - `worklog report attendance --week YYYY-MM-DD`
 - `worklog report attendance --month YYYY-MM`
 - `worklog report attendance --from YYYY-MM-DD --to YYYY-MM-DD`
-- `worklog approve weekly --friday YYYY-MM-DD`
-- `worklog approve monthly --month YYYY-MM`
 
 ## Open Decisions
 - Tag handling default:
@@ -99,14 +99,14 @@
 - Integration tests:
   - weekly generation with missing day warnings
   - monthly generation from weekly docs
-  - approve flow draft->notes move
+  - direct run flow writes notes and refuses overwrite
 
 ## Definition of Done (V1)
 - Daily scaffolding commands generate single day and full workweek files from template.
-- Generate weekly and monthly drafts from markdown with Ollama.
+- Generate weekly and monthly notes from markdown with Ollama.
 - Export weekly and monthly prompt packages for use with an external LLM.
 - Attendance reports for week/month/custom ranges.
-- Carry-forward tasks include all open tasks by default.
-- Approvals work through both metadata and command.
+- Weekly task sections stay manual with deterministic task candidates in `Task Review`.
+- Direct note workflow works through metadata and command.
 - Voice profile is generated from sample notes and injected into generation prompts.
 - README includes runnable setup, customization guidance, folder purpose documentation, and external prompt export usage.

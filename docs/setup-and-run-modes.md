@@ -14,6 +14,7 @@ Use this mode when you want the simplest setup with no PATH changes.
 - Examples:
   - `npm run dev -- validate`
   - `npm run dev -- generate dailies --friday 2026-02-20`
+  - `npm run dev -- run weekly --friday 2026-02-20`
 
 ## Mode B: Global `worklog` Command
 Build and link once from the repo root:
@@ -66,7 +67,7 @@ Run commands inside the container:
 ```bash
 docker compose exec worklog npm run dev -- validate
 docker compose exec worklog npm run dev -- generate dailies --friday 2026-02-20
-docker compose exec worklog npm run dev -- generate weekly --friday 2026-02-20
+docker compose exec worklog npm run dev -- run weekly --friday 2026-02-20
 ```
 
 Run one-off commands without attaching to the long-lived container:
@@ -123,11 +124,13 @@ npm run dev -- generate daily --date 2026-02-18
 npm run dev -- generate dailies --friday 2026-02-20
 ```
 
-9. Generate a weekly draft:
+9. Run the weekly workflow:
 
 ```bash
-npm run dev -- generate weekly --friday 2026-02-20
+npm run dev -- run weekly --friday 2026-02-20
 ```
+
+This writes `notes/weekly/YYYY/YYYY-MM-DD-W##.md` with `approved: false`.
 
 10. Export a weekly prompt package for another LLM:
 
@@ -135,11 +138,13 @@ npm run dev -- generate weekly --friday 2026-02-20
 npm run dev -- generate weekly --friday 2026-02-20 --export-prompt
 ```
 
-11. Generate a monthly draft:
+11. Run the monthly workflow:
 
 ```bash
-npm run dev -- generate monthly --month 2026-02
+npm run dev -- run monthly --month 2026-02
 ```
+
+This writes `notes/monthly/YYYY/YYYY-MM-Monthly.md` with `approved: false`.
 
 12. Export a monthly prompt package:
 
@@ -153,13 +158,6 @@ npm run dev -- generate monthly --month 2026-02 --export-prompt
 npm run dev -- report attendance --week 2026-02-20
 npm run dev -- report attendance --month 2026-02
 npm run dev -- report attendance --from 2026-02-01 --to 2026-02-20
-```
-
-14. Approve drafts:
-
-```bash
-npm run dev -- approve weekly --friday 2026-02-20
-npm run dev -- approve monthly --month 2026-02
 ```
 
 If you are using Docker mode instead of a local Node install, replace `npm run dev -- ...` with `docker compose exec worklog npm run dev -- ...`.

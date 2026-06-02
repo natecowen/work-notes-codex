@@ -22,9 +22,9 @@ voice:
     - notes/weekly
     - notes/monthly
   profile_path: cache/style-profile.json
+  style_example_limit: 3
 
 prompting:
-  sample_writing_limit: 2
   remember_rules:
     - Be factual.
     - Use action verbs.

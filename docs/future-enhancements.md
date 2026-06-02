@@ -9,7 +9,7 @@ This file tracks ideas discussed after the initial V1 scope. These items are not
 - Add a `doctor` command to validate config, templates, folders, Ollama connectivity, and sample-writing coverage.
 
 ## Reporting And Workflow
-- Add a one-command end-to-end flow such as `run weekly` to validate, index, generate, and surface the draft.
+- Add optional validation/index refresh flags to `run weekly` and `run monthly`.
 - Add richer tag and project rollups across days, weeks, and months.
 - Add CSV export for attendance and summary rollups.
 - Add trend reporting across months.
@@ -24,4 +24,4 @@ This file tracks ideas discussed after the initial V1 scope. These items are not
 - Add optional Outlook or calendar integration later if automatic meeting ingest becomes useful and allowed.
 
 ## Engineering
-- Add unit and integration tests for parsing, filename rules, approvals, attendance math, and template guardrails.
+- Add unit and integration tests for parsing, filename rules, note overwrite behavior, attendance math, and template guardrails.

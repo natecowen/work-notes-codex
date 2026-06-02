@@ -1,11 +1,12 @@
 import path from "node:path";
 import { aggregateAttendance } from "./attendance.js";
 import { monthFileName, monthKey, weeklyFileName } from "./dates.js";
-import { readText, writeText, listMarkdownFiles } from "./files.js";
+import { fileExists, readText, writeText, listMarkdownFiles } from "./files.js";
 import { loadDailyEntriesForWeek } from "./indexing.js";
 import { generateWithOllama } from "./llm.js";
 import type { AppConfig } from "../types.js";
-import { buildStyleProfile, loadSampleWritingExamples, loadStyleProfile, toStyleInstruction } from "./style.js";
+import { setApprovedFrontmatter } from "./markdown.js";
+import { buildStyleProfile, loadStyleProfile, toStyleInstruction } from "./style.js";
 import type { DailyEntry, WorkCategoryGroup } from "../types.js";
 import {
   findPeriodSection,
@@ -30,9 +31,14 @@ interface DebugPayload {
   error?: string;
 }
 
-interface GenerateDraftOptions {
+interface GenerateNoteOptions {
   debug?: boolean;
+  overwrite?: boolean;
 }
+
+const MANUAL_WEEKLY_TASK_PLACEHOLDER = "- Manual review required.";
+const MANUAL_MONTHLY_REVIEW_PLACEHOLDER = "- Manual review required.";
+const GENERATED_APPENDIX_HEADINGS = new Set(["task review", "debug"]);
 
 function renderAttendance(totals: ReturnType<typeof aggregateAttendance>): string {
   return [
@@ -42,10 +48,6 @@ function renderAttendance(totals: ReturnType<typeof aggregateAttendance>): strin
     `- Sick: ${totals.sick}`,
     `- Vacation: ${totals.vacation}`
   ].join("\n");
-}
-
-function sampleWritingLimit(config: AppConfig): number {
-  return config.prompting?.sample_writing_limit ?? 2;
 }
 
 function configuredWorkCategoryLabels(config: AppConfig): string[] {
@@ -111,28 +113,6 @@ function promptPath(baseDir: string, type: "weekly" | "monthly", key: string): s
   return path.join(baseDir, "prompts", type, fileName);
 }
 
-function renderSampleWritingBlocks(samples: Array<{ path: string; content: string }>): string {
-  if (samples.length === 0) {
-    return "No sample writing files were found in the configured voice.sample_dirs folders.";
-  }
-
-  return samples
-    .map(
-      (sample, index) =>
-        `## Sample Writing ${index + 1}\nSource: ${sample.path}\n\n\`\`\`md\n${sample.content.trim()}\n\`\`\``
-    )
-    .join("\n\n");
-}
-
-function renderSourceBlocks(blocks: Array<{ path: string; content: string }>, heading: string): string {
-  return [
-    heading,
-    ...blocks.map(
-      (item, index) => `## Source ${index + 1}\nPath: ${item.path}\n\n\`\`\`md\n${item.content.trim()}\n\`\`\``
-    )
-  ].join("\n\n");
-}
-
 function renderBullets(lines: string[], emptyLine = "-"): string {
   return lines.length > 0 ? lines.map((line) => `- ${line}`).join("\n") : emptyLine;
 }
@@ -172,6 +152,82 @@ function renderWeeklyKeyOutcomes(config: AppConfig, groups: WorkCategoryGroup[])
     .join("\n\n");
 }
 
+function renderCombinedDailyInput(
+  config: AppConfig,
+  entries: DailyEntry[],
+  weeklyContent: WeeklyDerivedContent,
+  attendanceMd: string
+): string {
+  const dates = entries.map((entry) => entry.date);
+  const keyOutcomesMd = renderWeeklyKeyOutcomes(config, weeklyContent.weeklyWorkCategories);
+  const meetingsMd = renderBullets(weeklyContent.meetings, "- None captured");
+  const firesMd = renderBullets(weeklyContent.fireLines, "- None captured");
+  const impactMd = renderBullets(weeklyContent.impactLines, "- None captured");
+
+  return [
+    "## Combined Daily Notes",
+    "The repeated daily headings have been merged into this single normalized input.",
+    "",
+    `Dates included:\n${renderBullets(dates, "- None")}`,
+    "",
+    `Attendance rollup:\n${attendanceMd}`,
+    "",
+    `Work:\n${keyOutcomesMd}`,
+    "",
+    `Meetings and collaboration:\n${meetingsMd}`,
+    "",
+    `Problems solved / fires prevented evidence:\n${firesMd}`,
+    "",
+    `Cross-team impact evidence:\n${impactMd}`
+  ].join("\n");
+}
+
+function renderCombinedWeeklyInput(
+  config: AppConfig,
+  weeklyInputs: Array<{ path: string; content: string }>,
+  monthlySectionValues: Record<string, string>
+): string {
+  const sourceFiles = weeklyInputs.map((item) => item.path);
+  const sectionBlocks = getMonthlyStructure(config).sections.map((section) => {
+    return `${section.label}:\n${monthlySectionValues[section.id] ?? "- None captured"}`;
+  });
+
+  return [
+    "## Combined Weekly Summaries",
+    "The repeated weekly headings have been merged into this single normalized input.",
+    `Source weekly files:\n${renderBullets(sourceFiles, "- None")}`,
+    ...sectionBlocks
+  ].join("\n\n");
+}
+
+function extractGeneratedSectionValue(
+  generated: string,
+  sections: Array<{ label: string }>,
+  label: string,
+  fallback: string
+): string {
+  const labels = sections.map((section) => section.label);
+  const extracted = extractManagedSection(generated, labels, label);
+  return hasSubstantiveSectionContent(extracted) ? extracted : fallback;
+}
+
+function mergeGeneratedSectionValues(
+  generated: string,
+  sections: Array<{ id: string; label: string }>,
+  deterministicValues: Record<string, string>,
+  forceDeterministicIds = new Set<string>()
+): Record<string, string> {
+  return Object.fromEntries(
+    sections.map((section) => {
+      const fallback = deterministicValues[section.id] ?? "- None captured";
+      const value = forceDeterministicIds.has(section.id)
+        ? fallback
+        : extractGeneratedSectionValue(generated, sections, section.label, fallback);
+      return [section.id, value];
+    })
+  );
+}
+
 function renderWeeklyFallback(
   template: string,
   config: AppConfig,
@@ -205,26 +261,13 @@ function extractSectionContent(content: string, startHeading: string, endHeading
   const lines = normalizeTemplate(content).split("\n");
   const startIndex = lines.findIndex((line) => normalizeHeadingLabel(line) === normalizeHeadingLabel(startHeading));
   if (startIndex < 0) return "";
+  const normalizedEndHeadings = new Set(endHeadings.map((heading) => normalizeHeadingLabel(heading)));
 
   const endIndex = lines.findIndex(
-    (line, index) =>
-      index > startIndex && endHeadings.map((heading) => normalizeHeadingLabel(heading)).includes(normalizeHeadingLabel(line))
+    (line, index) => index > startIndex && (normalizedEndHeadings.has(normalizeHeadingLabel(line)) || GENERATED_APPENDIX_HEADINGS.has(normalizeHeadingLabel(line)))
   );
 
   return lines.slice(startIndex + 1, endIndex < 0 ? undefined : endIndex).join("\n").trim();
-}
-
-function extractSectionContentRaw(content: string, startHeading: string, endHeadings: string[]): string {
-  const lines = normalizeTemplate(content).split("\n");
-  const startIndex = lines.findIndex((line) => normalizeHeadingLabel(line) === normalizeHeadingLabel(startHeading));
-  if (startIndex < 0) return "";
-
-  const endIndex = lines.findIndex(
-    (line, index) =>
-      index > startIndex && endHeadings.map((heading) => normalizeHeadingLabel(heading)).includes(normalizeHeadingLabel(line))
-  );
-
-  return lines.slice(startIndex + 1, endIndex < 0 ? undefined : endIndex).join("\n");
 }
 
 function hasSubstantiveSectionContent(content: string): boolean {
@@ -233,57 +276,6 @@ function hasSubstantiveSectionContent(content: string): boolean {
     .map((line) => line.trim())
     .filter(Boolean)
     .some((line) => /[A-Za-z0-9]/.test(line.replace(/^[-*]\s*/, "")));
-}
-
-function replaceSectionContent(content: string, startHeading: string, endHeadings: string[], replacement: string): string {
-  const lines = normalizeTemplate(content).split("\n");
-  const startIndex = lines.findIndex((line) => normalizeHeadingLabel(line) === normalizeHeadingLabel(startHeading));
-  if (startIndex < 0) return content;
-
-  const endIndex = lines.findIndex(
-    (line, index) =>
-      index > startIndex && endHeadings.map((heading) => normalizeHeadingLabel(heading)).includes(normalizeHeadingLabel(line))
-  );
-  if (endIndex < 0) {
-    return [...lines.slice(0, startIndex + 1), ...replacement.split("\n")].join("\n");
-  }
-
-  return [...lines.slice(0, startIndex + 1), ...replacement.split("\n"), ...lines.slice(endIndex)].join("\n");
-}
-
-function replaceLeadingContent(content: string, firstHeading: string, replacement: string): string {
-  const lines = normalizeTemplate(content).split("\n");
-  const startIndex = lines.findIndex((line) => normalizeHeadingLabel(line) === normalizeHeadingLabel(firstHeading));
-  if (startIndex < 0) return content;
-  return [...replacement.split("\n"), ...lines.slice(startIndex)].join("\n");
-}
-
-function applyManagedSectionsFromScaffold(
-  baseContent: string,
-  scaffoldContent: string,
-  sections: Array<{ label: string }>
-): string {
-  if (sections.length === 0) return baseContent;
-
-  let content = replaceLeadingContent(
-    baseContent,
-    sections[0].label,
-    normalizeTemplate(scaffoldContent).split("\n").slice(
-      0,
-      normalizeTemplate(scaffoldContent)
-        .split("\n")
-        .findIndex((line) => normalizeHeadingLabel(line) === normalizeHeadingLabel(sections[0].label))
-    ).join("\n")
-  );
-
-  const sectionOrder = sections.map((section) => section.label);
-  for (const section of sections) {
-    const nextIndex = sectionOrder.findIndex((label) => label === section.label);
-    const replacement = extractSectionContentRaw(scaffoldContent, section.label, sectionOrder.slice(nextIndex + 1));
-    content = replaceSectionContent(content, section.label, sectionOrder.slice(nextIndex + 1), replacement);
-  }
-
-  return content;
 }
 
 function extractManagedSection(content: string, labels: string[], label: string): string {
@@ -386,6 +378,11 @@ interface WeeklyDerivedContent {
   impactLines: string[];
 }
 
+export interface OpenTaskCandidate {
+  text: string;
+  lastSeen: string;
+}
+
 function getNonPersonalWorkLines(entry: DailyEntry): string[] {
   const explicit = entry.workCategories
     .filter((group) => normalizeHeadingLabel(group.category) !== normalizeHeadingLabel("Personal"))
@@ -460,6 +457,45 @@ function deriveWeeklyContent(entries: DailyEntry[], mondayIso?: string): WeeklyD
   };
 }
 
+function normalizeTaskKey(task: string): string {
+  return normalizeSentence(stripListMarker(task))
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function deriveOpenTaskCandidates(entries: DailyEntry[]): OpenTaskCandidate[] {
+  const statuses = new Map<string, { text: string; lastSeen: string; open: boolean }>();
+  const sortedEntries = [...entries].sort((left, right) => left.date.localeCompare(right.date));
+
+  for (const entry of sortedEntries) {
+    for (const task of entry.tasksOpen) {
+      const key = normalizeTaskKey(task);
+      if (!key) continue;
+      statuses.set(key, { text: task.trim(), lastSeen: entry.date, open: true });
+    }
+    for (const task of entry.tasksDone) {
+      const key = normalizeTaskKey(task);
+      if (!key) continue;
+      statuses.set(key, { text: task.trim(), lastSeen: entry.date, open: false });
+    }
+  }
+
+  return [...statuses.values()]
+    .filter((item) => item.open)
+    .map(({ text, lastSeen }) => ({ text, lastSeen }))
+    .sort((left, right) => left.lastSeen.localeCompare(right.lastSeen) || left.text.localeCompare(right.text));
+}
+
+function renderWeeklyTaskReview(candidates: OpenTaskCandidate[]): string {
+  return [
+    "# Task Review",
+    "",
+    "Open task candidates from daily notes (last status wins):",
+    renderBullets(candidates.map((candidate) => `${candidate.text} (last open: ${candidate.lastSeen})`), "- None captured")
+  ].join("\n");
+}
+
 function summarizeMonthlySections(config: AppConfig, weeklyInputs: Array<{ path: string; content: string }>): Record<string, string> {
   const weeklyLabels = getWeeklyStructure(config).sections.map((section) => section.label);
   const collect = (sectionId: string): string[] => {
@@ -479,8 +515,8 @@ function summarizeMonthlySections(config: AppConfig, weeklyInputs: Array<{ path:
     top_outcomes: renderBullets(collect("key_outcomes"), "- None captured"),
     fires: renderBullets(collect("fires_prevented"), "- None captured"),
     impact: renderBullets(collect("cross_team_impact"), "- None captured"),
-    risks: "- None captured",
-    next_focus: renderBullets(collect("next_week_tasks"), "- None captured")
+    risks: MANUAL_MONTHLY_REVIEW_PLACEHOLDER,
+    next_focus: MANUAL_MONTHLY_REVIEW_PLACEHOLDER
   };
 }
 
@@ -519,38 +555,17 @@ function validateWeeklyOllamaOutput(
     }
   }
   if (
-    expected.carryInTasks.length > 0 &&
-    !hasSubstantiveSectionContent(extractManagedSection(normalizedGenerated, labels, findPeriodSection(config, "weekly", "tasks_last_week")!.label))
-  ) {
-    return { ok: false, reason: "Task list from last Week was empty even though carry-forward tasks existed." };
-  }
-  if (
     expected.outcomes.length > 0 &&
       !hasSubstantiveSectionContent(extractManagedSection(normalizedGenerated, labels, findPeriodSection(config, "weekly", "key_outcomes")!.label))
   ) {
     return { ok: false, reason: "Key outcomes shipped/delivered was empty even though source work lines existed." };
   }
-  const tasksLastWeek = extractBulletItems(
-    extractManagedSection(normalizedGenerated, labels, findPeriodSection(config, "weekly", "tasks_last_week")!.label)
-  );
-  const nextWeekTasks = extractBulletItems(
-    extractManagedSection(normalizedGenerated, labels, findPeriodSection(config, "weekly", "next_week_tasks")!.label)
-  );
   const fires = extractBulletItems(
     extractManagedSection(normalizedGenerated, labels, findPeriodSection(config, "weekly", "fires_prevented")!.label)
   );
   const impact = extractBulletItems(
     extractManagedSection(normalizedGenerated, labels, findPeriodSection(config, "weekly", "cross_team_impact")!.label)
   );
-
-  if (
-    expected.carryInTasks.length > 0 &&
-    tasksLastWeek.length > 0 &&
-    tasksLastWeek.every((line) => expected.nextWeekTasks.includes(line)) &&
-    !expected.carryInTasks.every((line) => expected.nextWeekTasks.includes(line))
-  ) {
-    return { ok: false, reason: "Task list from last Week was overwritten with end-of-week open tasks." };
-  }
 
   const sourceMeetings = new Set(expected.meetings.map(normalizeSentence));
   if (
@@ -638,12 +653,27 @@ async function loadWeeklyInputsForMonth(
   }));
 }
 
-export async function generateWeeklyDraft(
+function weeklyOutputPath(cwd: string, config: AppConfig, fridayIso: string): string {
+  return path.join(path.resolve(cwd, config.paths.weekly_notes_dir, fridayIso.slice(0, 4)), weeklyFileName(fridayIso));
+}
+
+function monthlyOutputPath(cwd: string, config: AppConfig, month: string): string {
+  return path.join(path.resolve(cwd, config.paths.monthly_notes_dir, month.slice(0, 4)), monthFileName(month));
+}
+
+async function writeGeneratedOutput(outputPath: string, content: string, overwrite: boolean): Promise<void> {
+  if (!overwrite && (await fileExists(outputPath))) {
+    throw new Error(`Output already exists: ${outputPath}`);
+  }
+  await writeText(outputPath, content);
+}
+
+export async function generateWeeklyNote(
   cwd: string,
   config: AppConfig,
   fridayIso: string,
   mondayIso: string,
-  options: GenerateDraftOptions = {}
+  options: GenerateNoteOptions = {}
 ): Promise<{ outputPath: string; warnings: string[] }> {
   const warnings: string[] = [];
   const styleInstruction = await resolveStyleInstruction(cwd, config, warnings, "Facts only. No hype. No assumptions.");
@@ -656,9 +686,10 @@ export async function generateWeeklyDraft(
   const attendanceMd = renderAttendance(attendance);
   const firesMd = renderBullets(weeklyContent.fireLines, "- None captured");
   const impactMd = renderBullets(weeklyContent.impactLines, "- None captured");
-  const carryInMd = renderBullets(weeklyContent.carryInTasks, "- None captured");
-  const nextWeekMd = renderBullets(weeklyContent.nextWeekTasks, "- None captured");
+  const taskCandidates = deriveOpenTaskCandidates(entries);
+  const taskReview = renderWeeklyTaskReview(taskCandidates);
   const weeklySections = getWeeklyStructure(config).sections;
+  const combinedDailyInput = renderCombinedDailyInput(config, entries, weeklyContent, attendanceMd);
 
   const templatePath = path.resolve(cwd, config.paths.templates_dir, "weekly.md");
   const template = await readText(templatePath);
@@ -667,37 +698,30 @@ export async function generateWeeklyDraft(
     styleInstruction,
     "",
     `Friday date: ${fridayIso}`,
-    `Carry-forward tasks entering the week:\n${weeklyContent.carryInTasks.map((t) => `- ${t}`).join("\n") || "- None"}`,
-    `Open tasks remaining at the end of the week:\n${weeklyContent.nextWeekTasks.map((t) => `- ${t}`).join("\n") || "- None"}`,
-    `Work lines by category:\n${keyOutcomesMd}`,
-    `Flattened work lines:\n${weeklyContent.outcomes.join("\n") || "- None"}`,
-    `Meetings:\n${weeklyContent.meetings.map((m) => `- ${m}`).join("\n") || "- None"}`,
-    `Notes:\n${weeklyContent.notes.map((line) => `- ${line}`).join("\n") || "- None"}`,
-    `Problems solved / fires prevented source lines:\n${weeklyContent.fireLines.map((line) => `- ${line}`).join("\n") || "- None"}`,
-    `Cross-team impact source lines:\n${weeklyContent.impactLines.map((line) => `- ${line}`).join("\n") || "- None"}`,
-    `Attendance:\n${attendanceMd}`,
     `Managed weekly sections:\n${weeklySections.map((section) => `- ${section.id}: ${section.label}`).join("\n")}`,
+    "",
+    combinedDailyInput,
     "",
     `Template:\n${template}`,
     "",
     "Weekly section rules:",
-    "- `Task list from last Week` contains carry-forward items already open when the week started.",
+    "- Leave `Task list from last Week` and `Task list for Next Week` as manual review placeholders; do not infer tasks.",
+    "- Keep `Attendance Summary` exactly aligned to the combined input.",
     "- `Problems solved / fires prevented` contains concrete fixes, remediations, incidents, or blockers addressed this week.",
-    "- `Cross-team impact` preserves meeting and collaboration wording from the source notes; do not rewrite bullets into `Met with ...` phrases.",
-    "- `Task list for Next Week` contains forward-looking open tasks that remain at the end of the week.",
+    "- `Cross-team impact` preserves meeting and collaboration wording from the combined input; do not rewrite bullets into `Met with ...` phrases.",
+    "- Summarize the Work, Problems solved, and Cross-team impact sections; do not list every source line unless every line is important.",
     "",
     renderRememberBlock(config, "Generate the weekly summary now as markdown.")
   ].join("\n");
 
   const weeklySectionValues = {
-    tasks_last_week: carryInMd,
+    tasks_last_week: MANUAL_WEEKLY_TASK_PLACEHOLDER,
     key_outcomes: keyOutcomesMd,
     fires_prevented: firesMd,
     cross_team_impact: impactMd,
     attendance_summary: attendanceMd,
-    next_week_tasks: nextWeekMd
+    next_week_tasks: MANUAL_WEEKLY_TASK_PLACEHOLDER
   };
-  const renderedWeeklyScaffold = renderWeeklyFallback(template, config, fridayIso, weeklySectionValues);
   const systemPrompt = "You are a strict formatter. Output only valid markdown using the provided template format.";
   const debug: DebugPayload = {
     enabled: options.debug ?? false,
@@ -717,7 +741,12 @@ export async function generateWeeklyDraft(
     const validation = validateWeeklyOllamaOutput(config, template, generated, fridayIso, weeklyContent);
     debug.validation = validation;
     if (validation.ok) {
-      content = applyManagedSectionsFromScaffold(generated, renderedWeeklyScaffold, weeklySections);
+      const mergedValues = mergeGeneratedSectionValues(generated, weeklySections, weeklySectionValues, new Set([
+        "tasks_last_week",
+        "attendance_summary",
+        "next_week_tasks"
+      ]));
+      content = renderWeeklyFallback(template, config, fridayIso, mergedValues);
     } else {
       debug.usedFallback = true;
       warnings.push("Ollama output did not match expected format; used deterministic fallback.");
@@ -729,10 +758,12 @@ export async function generateWeeklyDraft(
     warnings.push(`Ollama unavailable or failed; used deterministic fallback. ${String(error)}`);
   }
 
-  const outputPath = path.resolve(cwd, config.paths.drafts_dir, "weekly", weeklyFileName(fridayIso));
+  const outputPath = weeklyOutputPath(cwd, config, fridayIso);
   const debugBlock = renderDebugBlock(debug);
-  const finalContent = debug.enabled ? `${content.trimEnd()}\n\n${debugBlock}\n` : `${content.trimEnd()}\n`;
-  await writeText(outputPath, finalContent);
+  const contentWithTaskReview = `${content.trimEnd()}\n\n${taskReview}`;
+  const finalContent = debug.enabled ? `${contentWithTaskReview.trimEnd()}\n\n${debugBlock}\n` : `${contentWithTaskReview.trimEnd()}\n`;
+  const writableContent = setApprovedFrontmatter(finalContent, false);
+  await writeGeneratedOutput(outputPath, writableContent, options.overwrite === true);
   return { outputPath, warnings };
 }
 
@@ -750,15 +781,9 @@ export async function exportWeeklyPrompt(
   const weeklyContent = deriveWeeklyContent(entries, mondayIso);
   const attendance = aggregateAttendance(entries);
   const attendanceMd = renderAttendance(attendance);
+  const combinedDailyInput = renderCombinedDailyInput(config, entries, weeklyContent, attendanceMd);
   const templatePath = path.resolve(cwd, config.paths.templates_dir, "weekly.md");
   const template = await readText(templatePath);
-  const samples = await loadSampleWritingExamples(cwd, config, sampleWritingLimit(config));
-  const sourceBlocks = await Promise.all(
-    entries.map(async (entry) => ({
-      path: path.relative(cwd, entry.sourcePath),
-      content: await readText(entry.sourcePath)
-    }))
-  );
 
   const fileName = weeklyFileName(fridayIso);
   const prompt = [
@@ -777,13 +802,13 @@ export async function exportWeeklyPrompt(
     "Preserve the weekly template structure and headers exactly.",
     "Replace all template placeholders with real content. Do not leave placeholder tokens like `{{FRIDAY}}` in the final file.",
     styleInstruction,
-    "Use the daily notes below as the source of truth.",
-    "Use the sample writing only for tone and phrasing, not as factual source material.",
+    "Use the combined daily input below as the source of truth.",
     "Do not invent meetings, outcomes, risks, or blockers.",
-    "Use `Task list from last Week` only for carry-forward items already open when the week began.",
-    "Use `Task list for Next Week` only for forward-looking tasks still open at the end of the week.",
+    "Leave `Task list from last Week` and `Task list for Next Week` as manual review placeholders using `- Manual review required.`; do not infer tasks.",
+    "Keep the attendance summary exactly aligned to the combined input.",
     "Keep `Cross-team impact` close to the source meeting and collaboration wording; do not rewrite bullets into `Met with ...` phrases.",
     "Keep `Problems solved / fires prevented` limited to concrete fixes, remediations, incidents, and blockers addressed this week.",
+    "Summarize the Work, Problems solved, and Cross-team impact sections; do not list every source line unless every line is important.",
     `Managed weekly sections: ${getWeeklyStructure(config).sections.map((section) => `${section.id}=${section.label}`).join("; ")}`,
     "",
     renderRememberBlock(config, "Generate the weekly summary now in a downloadable .md file."),
@@ -792,27 +817,12 @@ export async function exportWeeklyPrompt(
     `Friday date: ${fridayIso}`,
     `Monday date: ${mondayIso}`,
     "",
-    "## Derived Weekly Inputs",
-    `Carry-forward tasks entering the week:\n${weeklyContent.carryInTasks.map((task) => `- ${task}`).join("\n") || "- None"}`,
-    "",
-    `Open tasks remaining at the end of the week:\n${weeklyContent.nextWeekTasks.map((task) => `- ${task}`).join("\n") || "- None"}`,
-    "",
-    `Problems solved / fires prevented source lines:\n${weeklyContent.fireLines.map((line) => `- ${line}`).join("\n") || "- None"}`,
-    "",
-    `Cross-team impact source lines:\n${weeklyContent.impactLines.map((line) => `- ${line}`).join("\n") || "- None"}`,
-    "",
-    "## Attendance Summary",
-    attendanceMd,
+    combinedDailyInput,
     "",
     "## Weekly Template",
     "```md",
     template.trim(),
-    "```",
-    "",
-    "## Sample Writing",
-    renderSampleWritingBlocks(samples),
-    "",
-    renderSourceBlocks(sourceBlocks, "## Source Daily Notes")
+    "```"
   ].join("\n");
 
   const outputPath = path.resolve(cwd, config.paths.drafts_dir, promptPath("", "weekly", fridayIso));
@@ -820,11 +830,11 @@ export async function exportWeeklyPrompt(
   return { outputPath, warnings };
 }
 
-export async function generateMonthlyDraft(
+export async function generateMonthlyNote(
   cwd: string,
   config: AppConfig,
   month: string,
-  options: GenerateDraftOptions = {}
+  options: GenerateNoteOptions = {}
 ): Promise<{ outputPath: string; warnings: string[] }> {
   const warnings: string[] = [];
   const styleInstruction = await resolveStyleInstruction(cwd, config, warnings, "Facts only. Do not invent outcomes.");
@@ -836,17 +846,23 @@ export async function generateMonthlyDraft(
   const template = await readText(templatePath);
   const monthlySectionValues = summarizeMonthlySections(config, weeklyInputs);
   const renderedMonthlyScaffold = renderMonthlyFallback(template, config, month, monthlySectionValues);
+  const monthlySections = getMonthlyStructure(config).sections;
+  const combinedWeeklyInput = renderCombinedWeeklyInput(config, weeklyInputs, monthlySectionValues);
 
   const prompt = [
     "Use fixed categories exactly as given in the template.",
     styleInstruction,
     "",
     `Month: ${month}`,
-    `Managed monthly sections:\n${getMonthlyStructure(config).sections.map((section) => `- ${section.id}: ${section.label}`).join("\n")}`,
-    "Weekly inputs:",
-    ...weeklyInputs.map((item, idx) => `## Weekly ${idx + 1}\nSource: ${item.path}\n${item.content}`),
+    `Managed monthly sections:\n${monthlySections.map((section) => `- ${section.id}: ${section.label}`).join("\n")}`,
+    "",
+    combinedWeeklyInput,
     "",
     `Template:\n${template}`,
+    "",
+    "Monthly section rules:",
+    "- Leave `Risks & Blockers` and `Next Month Focus` as manual review placeholders.",
+    "- Summarize top outcomes, problems solved, and cross-team impact into concise bullets.",
     "",
     renderRememberBlock(config, "Generate the monthly summary now as markdown.")
   ].join("\n");
@@ -872,7 +888,11 @@ export async function generateMonthlyDraft(
     });
     debug.validation = validation;
     if (validation.ok) {
-      content = applyManagedSectionsFromScaffold(generated, renderedMonthlyScaffold, getMonthlyStructure(config).sections);
+      const mergedValues = mergeGeneratedSectionValues(generated, monthlySections, monthlySectionValues, new Set([
+        "risks",
+        "next_focus"
+      ]));
+      content = renderMonthlyFallback(template, config, month, mergedValues);
     } else {
       debug.usedFallback = true;
       warnings.push("Ollama output did not match expected monthly format; used fallback template.");
@@ -884,10 +904,11 @@ export async function generateMonthlyDraft(
     warnings.push(`Ollama unavailable or failed; used fallback template. ${String(error)}`);
   }
 
-  const outputPath = path.resolve(cwd, config.paths.drafts_dir, "monthly", monthFileName(month));
+  const outputPath = monthlyOutputPath(cwd, config, month);
   const debugBlock = renderDebugBlock(debug);
   const finalContent = debug.enabled ? `${content.trimEnd()}\n\n${debugBlock}\n` : `${content.trimEnd()}\n`;
-  await writeText(outputPath, finalContent);
+  const writableContent = setApprovedFrontmatter(finalContent, false);
+  await writeGeneratedOutput(outputPath, writableContent, options.overwrite === true);
   return { outputPath, warnings };
 }
 
@@ -904,7 +925,8 @@ export async function exportMonthlyPrompt(
   }
   const templatePath = path.resolve(cwd, config.paths.templates_dir, "monthly.md");
   const template = await readText(templatePath);
-  const samples = await loadSampleWritingExamples(cwd, config, sampleWritingLimit(config));
+  const monthlySectionValues = summarizeMonthlySections(config, weeklyInputs);
+  const combinedWeeklyInput = renderCombinedWeeklyInput(config, weeklyInputs, monthlySectionValues);
   const fileName = monthFileName(month);
 
   const prompt = [
@@ -923,9 +945,10 @@ export async function exportMonthlyPrompt(
     "Preserve the monthly template structure and headers exactly.",
     "Replace all template placeholders with real content. Do not leave placeholder tokens like `{{MONTH}}` in the final file.",
     styleInstruction,
-    "Use the weekly summaries below as the source of truth.",
-    "Use the sample writing only for tone and phrasing, not as factual source material.",
+    "Use the combined weekly input below as the source of truth.",
     "Do not invent accomplishments, blockers, or risks.",
+    "Leave `Risks & Blockers` and `Next Month Focus` as manual review placeholders.",
+    "Summarize each monthly section; do not list every weekly source line unless every line is important.",
     `Managed monthly sections: ${getMonthlyStructure(config).sections.map((section) => `${section.id}=${section.label}`).join("; ")}`,
     "",
     renderRememberBlock(config, "Generate the monthly summary now in a downloadable .md file."),
@@ -933,15 +956,12 @@ export async function exportMonthlyPrompt(
     "## Target Month",
     `Month: ${month}`,
     "",
+    combinedWeeklyInput,
+    "",
     "## Monthly Template",
     "```md",
     template.trim(),
-    "```",
-    "",
-    "## Sample Writing",
-    renderSampleWritingBlocks(samples),
-    "",
-    renderSourceBlocks(weeklyInputs, "## Source Weekly Notes")
+    "```"
   ].join("\n");
 
   const outputPath = path.resolve(cwd, config.paths.drafts_dir, promptPath("", "monthly", month));

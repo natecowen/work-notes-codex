@@ -30,10 +30,12 @@ function validateConfig(config: AppConfig): void {
     throw new Error("Invalid config: voice.sample_dirs must be a list when provided.");
   }
   if (
-    config.prompting?.sample_writing_limit !== undefined &&
-    (!Number.isInteger(config.prompting.sample_writing_limit) || config.prompting.sample_writing_limit < 1)
+    config.voice.style_example_limit !== undefined &&
+    (!Number.isInteger(config.voice.style_example_limit) ||
+      config.voice.style_example_limit < 0 ||
+      config.voice.style_example_limit > 10)
   ) {
-    throw new Error("Invalid config: prompting.sample_writing_limit must be an integer >= 1.");
+    throw new Error("Invalid config: voice.style_example_limit must be an integer between 0 and 10.");
   }
   if (config.prompting?.remember_rules && !Array.isArray(config.prompting.remember_rules)) {
     throw new Error("Invalid config: prompting.remember_rules must be a list when provided.");

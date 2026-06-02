@@ -23,8 +23,8 @@ Use `node dist/cli.js ...` for the real integration run so the test exercises th
 
 Pick one of these flows:
 
-- `daily-to-weekly`: Create fake daily notes for one work week and run `generate weekly --friday YYYY-MM-DD`.
-- `weekly-to-monthly`: Create fake approved weekly notes for one month and run `generate monthly --month YYYY-MM`.
+- `daily-to-weekly`: Create fake daily notes for one work week and run `run weekly --friday YYYY-MM-DD`.
+- `weekly-to-monthly`: Create fake weekly notes for one month and run `run monthly --month YYYY-MM`.
 
 If the user is checking category behavior, prefer `daily-to-weekly`.
 
@@ -37,11 +37,9 @@ Create a temp directory under `/tmp`, then create the app folder structure insid
 ```text
 config/
 templates/
-notes/daily/YYYY/
+notes/daily/YYYY/MM-MonthName/
 notes/weekly/YYYY/
 notes/monthly/YYYY/
-drafts/weekly/
-drafts/monthly/
 drafts/prompts/weekly/
 drafts/prompts/monthly/
 cache/
@@ -81,7 +79,7 @@ Use realistic markdown that matches the daily parser:
 - `## Notes`
 - `## Task list for tomorrow:`
 
-Use concrete work bullets, meetings, and carry-forward tasks.
+Use concrete work bullets, meetings, and task checkbox changes.
 
 Use enough variety to test:
 
@@ -92,7 +90,7 @@ Use enough variety to test:
 
 ### Weekly-To-Monthly
 
-Create approved weekly files under `notes/weekly/YYYY/`.
+Create weekly files under `notes/weekly/YYYY/` using names such as `YYYY-MM-DD-W12.md`.
 
 Use realistic weekly summaries with:
 
@@ -123,8 +121,10 @@ Inspect the prompt package and verify:
 - the `Remember:` block is present
 - category guidance reflects configured work categories
 - the template block is present
-- source notes are included
-- sample writing is included when available
+- weekly exports include a `Combined Daily Notes` block instead of raw daily files
+- monthly exports include a `Combined Weekly Summaries` block instead of raw weekly files
+- sample writing files are not pasted into the prompt package
+- weekly exports do not include task candidates
 
 ## Ollama Reachability
 
@@ -148,8 +148,8 @@ If the user does want to verify fallback behavior, it is fine to try the sandbox
 Run the real command against the disposable workspace:
 
 ```bash
-node /abs/path/to/repo/dist/cli.js generate weekly --friday YYYY-MM-DD
-node /abs/path/to/repo/dist/cli.js generate monthly --month YYYY-MM
+node /abs/path/to/repo/dist/cli.js run weekly --friday YYYY-MM-DD
+node /abs/path/to/repo/dist/cli.js run monthly --month YYYY-MM
 ```
 
 Prefer requesting approval and running the live Ollama command outside the sandbox immediately.
@@ -163,7 +163,7 @@ If a sandbox run is attempted and fails with a fetch or connection error, rerun 
 
 ## Inspect The Output
 
-Open the generated draft and check formatting first.
+Open the generated note and check formatting first.
 
 ### Weekly Checks
 
@@ -172,10 +172,12 @@ Verify:
 - `Work (Facts Only):` is present
 - `Key outcomes shipped/delivered:` is present
 - configured category headers appear only once each in the managed output
-- no raw `### Category` headings leak into the weekly draft
+- no raw `### Category` headings leak into the weekly note
 - no `- None captured` appears when valid categorized work exists
 - blank lines between major sections match the weekly template
-- attendance and next-week tasks are present
+- attendance is present
+- weekly task sections are manual placeholders
+- `# Task Review` contains deterministic task candidates
 
 Weekly failure patterns to call out explicitly:
 
@@ -184,6 +186,7 @@ Weekly failure patterns to call out explicitly:
 - missing non-managed headings such as `Work (Facts Only):`
 - compressed section spacing
 - deterministic fallback used unexpectedly
+- task candidates leaking into exported prompt packages
 
 ### Monthly Checks
 
@@ -194,6 +197,8 @@ Verify:
 - no doubled bullets like `- - item`
 - blank lines between major sections match the monthly template
 - content is flattened into clean monthly bullets
+- `Risks & Blockers` and `Next Month Focus` are manual placeholders
+- weekly `# Task Review` appendices do not leak into monthly output
 
 Monthly failure patterns to call out explicitly:
 
@@ -250,6 +255,6 @@ When the user asks to "run an integration test" for this app:
 ## Example Prompts
 
 - Run a daily-to-weekly Ollama integration test for this repo and verify category formatting.
-- Run a weekly-to-monthly integration test with fake approved weekly notes and check for doubled bullets.
-- Verify the prompt package and live weekly draft for my configured work categories.
+- Run a weekly-to-monthly integration test with fake weekly notes and check for doubled bullets.
+- Verify the prompt package and live weekly note for my configured work categories.
 - Reproduce the formatting bug in a disposable workspace and confirm the fix through Ollama.

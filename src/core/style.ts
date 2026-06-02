@@ -80,6 +80,36 @@ function topValues(items: string[], limit = 6): string[] {
     .map(([k]) => k);
 }
 
+function wordCount(item: string): number {
+  return item.split(/\s+/).filter(Boolean).length;
+}
+
+function isUsefulStyleExample(item: string): boolean {
+  const normalized = item.trim();
+  if (!normalized || /^none captured\.?$/i.test(normalized)) return false;
+  if (/^(office|wfh|holiday|sick|vacation):\s*\d+$/i.test(normalized)) return false;
+  if (/^\[[ x]\]/i.test(normalized)) return false;
+  const words = wordCount(normalized);
+  return words >= 4 && words <= 28;
+}
+
+function representativeBullets(items: string[], avgBulletWords: number, limit: number): string[] {
+  if (limit <= 0) return [];
+
+  const seen = new Set<string>();
+  return items
+    .map((item) => item.trim())
+    .filter(isUsefulStyleExample)
+    .filter((item) => {
+      const key = item.toLowerCase().replace(/[.]+$/g, "");
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((left, right) => Math.abs(wordCount(left) - avgBulletWords) - Math.abs(wordCount(right) - avgBulletWords))
+    .slice(0, limit);
+}
+
 export async function buildStyleProfile(cwd: string, config: AppConfig): Promise<VoiceStyleProfile> {
   const files = await sampleFiles(cwd, config);
 
@@ -99,7 +129,8 @@ export async function buildStyleProfile(cwd: string, config: AppConfig): Promise
     headingCategoryCount: headingCategories.length,
     commonHeadingCategories: topValues(headingCategories),
     prefersCategoryPrefix,
-    commonCategoryPrefixes: topPrefixes(bullets)
+    commonCategoryPrefixes: topPrefixes(bullets),
+    representativeBullets: representativeBullets(bullets, avgBulletWords, config.voice.style_example_limit ?? 3)
   };
 
   await writeText(profilePath(cwd, config), JSON.stringify(profile, null, 2));
@@ -110,20 +141,6 @@ export async function loadStyleProfile(cwd: string, config: AppConfig): Promise<
   return readJsonIfExists<VoiceStyleProfile>(profilePath(cwd, config));
 }
 
-export async function loadSampleWritingExamples(
-  cwd: string,
-  config: AppConfig,
-  limit = 4
-): Promise<Array<{ path: string; content: string }>> {
-  const files = await sampleFiles(cwd, config);
-  const selected = files.slice(-limit);
-  const contents = await Promise.all(selected.map((file) => readText(file)));
-  return selected.map((file, index) => ({
-    path: path.relative(cwd, file),
-    content: contents[index]
-  }));
-}
-
 export function toStyleInstruction(profile: VoiceStyleProfile): string {
   let groupingRule = "Use plain factual bullets without extra narrative framing.";
   if (profile.commonHeadingCategories.length > 0) {
@@ -132,7 +149,7 @@ export function toStyleInstruction(profile: VoiceStyleProfile): string {
     groupingRule = `Prefer bullet prefix labels when useful (examples: ${profile.commonCategoryPrefixes.join(", ")}).`;
   }
 
-  return [
+  const rules = [
     "Voice constraints:",
     "- Facts only. No hype, no fluff, no motivational tone.",
     "- Use concise bullets and direct statements.",
@@ -140,5 +157,15 @@ export function toStyleInstruction(profile: VoiceStyleProfile): string {
     `- ${groupingRule}`,
     "- Do not invent accomplishments, outcomes, or blockers.",
     "- Keep wording practical and concrete."
-  ].join("\n");
+  ];
+
+  const examples = profile.representativeBullets?.slice(0, 10) ?? [];
+  if (examples.length > 0) {
+    rules.push(
+      "Style examples from approved summaries (voice only; do not reuse these facts):",
+      ...examples.map((example) => `- ${example}`)
+    );
+  }
+
+  return rules.join("\n");
 }

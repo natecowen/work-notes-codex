@@ -3,12 +3,16 @@ import { Command } from "commander";
 import path from "node:path";
 import { loadConfig } from "./core/config.js";
 import { resolveWeekWindowFromFriday } from "./core/dates.js";
-import { exportMonthlyPrompt, exportWeeklyPrompt, generateMonthlyDraft, generateWeeklyDraft } from "./core/generate.js";
+import {
+  exportMonthlyPrompt,
+  exportWeeklyPrompt,
+  generateMonthlyNote,
+  generateWeeklyNote
+} from "./core/generate.js";
 import { runAttendanceReport } from "./core/report.js";
-import { approveMonthly, approveWeekly } from "./core/approve.js";
 import { runInit } from "./core/init.js";
 import { createDailyFile, createDailyWeekFiles } from "./core/scaffold.js";
-import { buildDailyIndex, buildIndexPayload, readIndexCache, writeIndexCache } from "./core/indexing.js";
+import { buildDailyIndex, buildIndexPayload, writeIndexCache } from "./core/indexing.js";
 import { buildStyleProfile } from "./core/style.js";
 
 const program = new Command();
@@ -30,8 +34,7 @@ program
     const cwd = process.cwd();
     const config = await loadConfig(cwd);
     const result = await buildDailyIndex(cwd, config);
-    const existing = await readIndexCache(cwd, config);
-    const payload = buildIndexPayload(result.rows, result.errors, existing?.approvals ?? []);
+    const payload = buildIndexPayload(result.rows, result.errors);
     await writeIndexCache(cwd, config, payload, "index.json");
 
     console.log("Config is valid.");
@@ -53,8 +56,7 @@ program
     const cwd = process.cwd();
     const config = await loadConfig(cwd);
     const result = await buildDailyIndex(cwd, config);
-    const existing = await readIndexCache(cwd, config);
-    const payload = buildIndexPayload(result.rows, result.errors, existing?.approvals ?? []);
+    const payload = buildIndexPayload(result.rows, result.errors);
     await writeIndexCache(cwd, config, payload, "index.json");
     console.log(`Indexed daily files: ${result.rows.length}`);
     console.log(`Index errors: ${result.errors.length}`);
@@ -87,7 +89,7 @@ voice
     }
   });
 
-const generate = program.command("generate").description("Generate weekly/monthly drafts.");
+const generate = program.command("generate").description("Generate daily files and external prompt packages.");
 
 generate
   .command("daily")
@@ -120,18 +122,16 @@ generate
 generate
   .command("weekly")
   .requiredOption("--friday <YYYY-MM-DD>", "Friday date of the target week")
-  .option("--export-prompt", "Write an external-LLM prompt package instead of generating with Ollama", false)
-  .option("--debug", "Append prompt/response debug details to the generated draft", false)
-  .action(async (opts: { friday: string; exportPrompt: boolean; debug: boolean }) => {
+  .option("--export-prompt", "Write an external-LLM prompt package", false)
+  .action(async (opts: { friday: string; exportPrompt: boolean }) => {
+    if (!opts.exportPrompt) {
+      throw new Error("`generate weekly` only creates prompt packages now. Use `--export-prompt` or run `worklog run weekly --friday YYYY-MM-DD`.");
+    }
     const cwd = process.cwd();
     const config = await loadConfig(cwd);
     const week = resolveWeekWindowFromFriday(opts.friday);
-    const result = opts.exportPrompt
-      ? await exportWeeklyPrompt(cwd, config, week.friday, week.monday)
-      : await generateWeeklyDraft(cwd, config, week.friday, week.monday, { debug: opts.debug });
-    console.log(
-      `${opts.exportPrompt ? "Weekly prompt package" : "Weekly draft"}: ${path.relative(cwd, result.outputPath)}`
-    );
+    const result = await exportWeeklyPrompt(cwd, config, week.friday, week.monday);
+    console.log(`Weekly prompt package: ${path.relative(cwd, result.outputPath)}`);
     if (result.warnings.length > 0) {
       console.log("Warnings:");
       result.warnings.forEach((w) => console.log(`- ${w}`));
@@ -141,17 +141,48 @@ generate
 generate
   .command("monthly")
   .requiredOption("--month <YYYY-MM>", "Month key")
-  .option("--export-prompt", "Write an external-LLM prompt package instead of generating with Ollama", false)
-  .option("--debug", "Append prompt/response debug details to the generated draft", false)
-  .action(async (opts: { month: string; exportPrompt: boolean; debug: boolean }) => {
+  .option("--export-prompt", "Write an external-LLM prompt package", false)
+  .action(async (opts: { month: string; exportPrompt: boolean }) => {
+    if (!opts.exportPrompt) {
+      throw new Error("`generate monthly` only creates prompt packages now. Use `--export-prompt` or run `worklog run monthly --month YYYY-MM`.");
+    }
     const cwd = process.cwd();
     const config = await loadConfig(cwd);
-    const result = opts.exportPrompt
-      ? await exportMonthlyPrompt(cwd, config, opts.month)
-      : await generateMonthlyDraft(cwd, config, opts.month, { debug: opts.debug });
-    console.log(
-      `${opts.exportPrompt ? "Monthly prompt package" : "Monthly draft"}: ${path.relative(cwd, result.outputPath)}`
-    );
+    const result = await exportMonthlyPrompt(cwd, config, opts.month);
+    console.log(`Monthly prompt package: ${path.relative(cwd, result.outputPath)}`);
+    if (result.warnings.length > 0) {
+      console.log("Warnings:");
+      result.warnings.forEach((w) => console.log(`- ${w}`));
+    }
+  });
+
+const run = program.command("run").description("Preferred note workflows.");
+
+run
+  .command("weekly")
+  .requiredOption("--friday <YYYY-MM-DD>", "Friday date of the target week")
+  .option("--overwrite", "Overwrite the note if it already exists", false)
+  .action(async (opts: { friday: string; overwrite: boolean }) => {
+    const cwd = process.cwd();
+    const config = await loadConfig(cwd);
+    const week = resolveWeekWindowFromFriday(opts.friday);
+    const result = await generateWeeklyNote(cwd, config, week.friday, week.monday, { overwrite: opts.overwrite });
+    console.log(`Weekly note: ${path.relative(cwd, result.outputPath)}`);
+    if (result.warnings.length > 0) {
+      console.log("Warnings:");
+      result.warnings.forEach((w) => console.log(`- ${w}`));
+    }
+  });
+
+run
+  .command("monthly")
+  .requiredOption("--month <YYYY-MM>", "Month key")
+  .option("--overwrite", "Overwrite the note if it already exists", false)
+  .action(async (opts: { month: string; overwrite: boolean }) => {
+    const cwd = process.cwd();
+    const config = await loadConfig(cwd);
+    const result = await generateMonthlyNote(cwd, config, opts.month, { overwrite: opts.overwrite });
+    console.log(`Monthly note: ${path.relative(cwd, result.outputPath)}`);
     if (result.warnings.length > 0) {
       console.log("Warnings:");
       result.warnings.forEach((w) => console.log(`- ${w}`));
@@ -182,30 +213,6 @@ report
       console.log(`Attendance report: ${path.relative(cwd, outPath)}`);
     }
   );
-
-const approve = program.command("approve").description("Approve drafts into notes.");
-
-approve
-  .command("weekly")
-  .requiredOption("--friday <YYYY-MM-DD>", "Friday date in weekly filename")
-  .action(async (opts: { friday: string }) => {
-    const cwd = process.cwd();
-    const config = await loadConfig(cwd);
-    const result = await approveWeekly(cwd, config, opts.friday);
-    console.log(`Approved weekly: ${path.relative(cwd, result.approvedPath)}`);
-    console.log("Audit appended: cache/index.json");
-  });
-
-approve
-  .command("monthly")
-  .requiredOption("--month <YYYY-MM>", "Monthly filename key")
-  .action(async (opts: { month: string }) => {
-    const cwd = process.cwd();
-    const config = await loadConfig(cwd);
-    const result = await approveMonthly(cwd, config, opts.month);
-    console.log(`Approved monthly: ${path.relative(cwd, result.approvedPath)}`);
-    console.log("Audit appended: cache/index.json");
-  });
 
 program.parseAsync().catch((error) => {
   console.error(`Error: ${String(error)}`);

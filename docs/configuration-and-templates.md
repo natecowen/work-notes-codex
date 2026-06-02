@@ -33,9 +33,9 @@ voice:
     - notes/weekly
     - notes/monthly
   profile_path: cache/style-profile.json
+  style_example_limit: 3
 
 prompting:
-  sample_writing_limit: 2
   remember_rules:
     - Be factual.
     - Use action verbs.
@@ -67,11 +67,13 @@ tags:
 
 ## What To Change In `config/config.yaml`
 - `paths.*`: move where notes, drafts, templates, reports, or cache files live.
+- Daily files are created under `paths.daily_notes_dir/YYYY/MM-MonthName/YYYY-MM-DD.md`.
+- Weekly files are created under `paths.weekly_notes_dir/YYYY/YYYY-MM-DD-W##.md`.
 - `llm.model`: switch the default Ollama model.
 - `llm.temperature` and `llm.max_tokens`: tighten or loosen generation behavior.
 - `voice.sample_dirs`: choose which folders count as sample writing.
 - `voice.profile_path`: choose where the style profile is stored.
-- `prompting.sample_writing_limit`: cap how many sample files are inserted into prompts.
+- `voice.style_example_limit`: cap how many compact voice-example bullets are included in prompts. Set to `0` to disable examples.
 - `prompting.remember_rules`: append strict reminder rules to weekly and monthly prompts.
 - `categories`: change the fixed category list used by the app.
 - `attendance.values`: define allowed attendance values.

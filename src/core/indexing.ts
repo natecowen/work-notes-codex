@@ -4,11 +4,10 @@ import type {
   DailyEntry,
   DailyIndexRow,
   DailyParseError,
-  IndexCache,
-  ApprovalAuditEvent
+  IndexCache
 } from "../types.js";
-import { iterateWorkdays } from "./dates.js";
-import { listMarkdownFiles, listMarkdownFilesRecursive, readJsonIfExists, readText, writeText } from "./files.js";
+import { dailyFilePath, iterateWorkdays } from "./dates.js";
+import { listMarkdownFilesRecursive, readJsonIfExists, readText, writeText } from "./files.js";
 import { parseDailyMarkdown } from "./markdown.js";
 
 export async function loadDailyEntriesForWeek(
@@ -17,12 +16,10 @@ export async function loadDailyEntriesForWeek(
   mondayIso: string
 ): Promise<{ entries: DailyEntry[]; missingDates: string[] }> {
   const dates = iterateWorkdays(mondayIso);
-  const baseDir = path.resolve(cwd, config.paths.daily_notes_dir, mondayIso.slice(0, 4));
-
   const entries: DailyEntry[] = [];
   const missingDates: string[] = [];
   for (const date of dates) {
-    const filePath = path.join(baseDir, `${date}.md`);
+    const filePath = dailyFilePath(cwd, config, date);
     try {
       const raw = await readText(filePath);
       entries.push(parseDailyMarkdown(filePath, raw, config));
@@ -43,7 +40,7 @@ export async function loadDailyEntriesInRange(
   const files: string[] = [];
   for (const year of yearDirs) {
     const dir = path.resolve(cwd, config.paths.daily_notes_dir, year);
-    const inDir = await listMarkdownFiles(dir);
+    const inDir = await listMarkdownFilesRecursive(dir);
     files.push(...inDir);
   }
 
@@ -109,32 +106,13 @@ export async function buildDailyIndex(
 
 export function buildIndexPayload(
   rows: DailyIndexRow[],
-  errors: DailyParseError[],
-  approvals: ApprovalAuditEvent[]
+  errors: DailyParseError[]
 ): IndexCache {
   return {
     generatedAt: new Date().toISOString(),
     totalRows: rows.length,
     totalErrors: errors.length,
     rows,
-    errors,
-    approvals
+    errors
   };
-}
-
-export async function appendApprovalAudit(
-  cwd: string,
-  config: AppConfig,
-  event: ApprovalAuditEvent
-): Promise<void> {
-  const existing = await readIndexCache(cwd, config);
-  const payload: IndexCache = {
-    generatedAt: existing?.generatedAt ?? new Date().toISOString(),
-    totalRows: existing?.totalRows ?? 0,
-    totalErrors: existing?.totalErrors ?? 0,
-    rows: existing?.rows ?? [],
-    errors: existing?.errors ?? [],
-    approvals: [...(existing?.approvals ?? []), event]
-  };
-  await writeIndexCache(cwd, config, payload, "index.json");
 }

@@ -58,9 +58,9 @@ export interface AppConfig {
     style_profile_from_samples: boolean;
     sample_dirs?: string[];
     profile_path?: string;
+    style_example_limit?: number;
   };
   prompting?: {
-    sample_writing_limit?: number;
     remember_rules?: string[];
   };
   categories: string[];
@@ -119,21 +119,12 @@ export interface DailyParseError {
   error: string;
 }
 
-export interface ApprovalAuditEvent {
-  approvedAt: string;
-  periodType: "weekly" | "monthly";
-  periodKey: string;
-  draftPath: string;
-  approvedPath: string;
-}
-
 export interface IndexCache {
   generatedAt: string;
   totalRows: number;
   totalErrors: number;
   rows: DailyIndexRow[];
   errors: DailyParseError[];
-  approvals: ApprovalAuditEvent[];
 }
 
 export interface VoiceStyleProfile {
@@ -145,4 +136,5 @@ export interface VoiceStyleProfile {
   commonHeadingCategories: string[];
   prefersCategoryPrefix: boolean;
   commonCategoryPrefixes: string[];
+  representativeBullets?: string[];
 }

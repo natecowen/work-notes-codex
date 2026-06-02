@@ -217,7 +217,7 @@ export function parseDailyMarkdown(filePath: string, raw: string, config: AppCon
   };
 }
 
-export function setApprovedFrontmatter(raw: string): string {
+export function setApprovedFrontmatter(raw: string, approved = true): string {
   const parsed = matter(raw);
   const normalized = Object.fromEntries(
     Object.entries(parsed.data).map(([key, value]) => [
@@ -225,6 +225,6 @@ export function setApprovedFrontmatter(raw: string): string {
       value instanceof Date ? value.toISOString().slice(0, 10) : value
     ])
   );
-  parsed.data = { ...normalized, approved: true };
+  parsed.data = { ...normalized, approved };
   return matter.stringify(parsed.content, parsed.data);
 }

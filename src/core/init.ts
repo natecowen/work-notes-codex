@@ -25,9 +25,9 @@ voice:
     - notes/weekly
     - notes/monthly
   profile_path: cache/style-profile.json
+  style_example_limit: 3
 
 prompting:
-  sample_writing_limit: 2
   remember_rules:
     - Be factual.
     - Use action verbs.
@@ -230,8 +230,8 @@ export async function runInit(cwd: string): Promise<void> {
     ensureDir(path.resolve(cwd, "notes/daily")),
     ensureDir(path.resolve(cwd, "notes/weekly")),
     ensureDir(path.resolve(cwd, "notes/monthly")),
-    ensureDir(path.resolve(cwd, "drafts/weekly")),
-    ensureDir(path.resolve(cwd, "drafts/monthly")),
+    ensureDir(path.resolve(cwd, "drafts/prompts/weekly")),
+    ensureDir(path.resolve(cwd, "drafts/prompts/monthly")),
     ensureDir(path.resolve(cwd, "reports/attendance")),
     ensureDir(path.resolve(cwd, "cache"))
   ]);

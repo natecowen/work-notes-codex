@@ -1,11 +1,11 @@
 import path from "node:path";
 import type { AppConfig, DailySectionDefinition } from "../types.js";
-import { iterateWorkdays } from "./dates.js";
+import { dailyFilePath, iterateWorkdays } from "./dates.js";
 import { fileExists, readText, writeText } from "./files.js";
 import { findDailySection, getDailyStructure } from "./sections.js";
 
 function buildDailyPath(cwd: string, config: AppConfig, date: string): string {
-  return path.resolve(cwd, config.paths.daily_notes_dir, date.slice(0, 4), `${date}.md`);
+  return dailyFilePath(cwd, config, date);
 }
 
 function parseSectionDirectiveAttributes(input: string): Record<string, string> {
